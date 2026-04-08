@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::fmt::{Display, Formatter};
 use std::io;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const SERVER_NAME: &str = "llm-wiki";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -314,45 +314,26 @@ async fn read_request<R>(reader: &mut BufReader<R>) -> Result<Option<JsonRpcRequ
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    let mut content_length = None;
-
-    loop {
-        let mut line = String::new();
-        let bytes_read = match reader.read_line(&mut line).await {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                eprintln!("Failed to read MCP stdin: {error}. Exiting process.");
-                std::process::exit(1);
-            }
-        };
-        if bytes_read == 0 {
-            return Ok(None);
+    let mut line = String::new();
+    let bytes_read = match reader.read_line(&mut line).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("Failed to read MCP stdin: {error}. Exiting process.");
+            std::process::exit(1);
         }
+    };
 
-        let trimmed = line.trim_end_matches(['\r', '\n']);
-        if trimmed.is_empty() {
-            break;
-        }
-
-        if let Some((name, value)) = trimmed.split_once(':') {
-            if name.eq_ignore_ascii_case("content-length") {
-                content_length = Some(
-                    value
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
-                );
-            }
-        }
+    if bytes_read == 0 {
+        return Ok(None);
     }
 
-    let body_length = content_length.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "Missing Content-Length header")
-    })?;
-    let mut buffer = vec![0_u8; body_length];
-    reader.read_exact(&mut buffer).await?;
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
 
-    Ok(Some(serde_json::from_slice(&buffer)?))
+    let request: JsonRpcRequest = serde_json::from_str(trimmed)?;
+    Ok(Some(request))
 }
 
 async fn write_response<W, T>(writer: &mut W, response: JsonRpcResponse<T>) -> Result<(), McpError>
@@ -360,9 +341,8 @@ where
     W: tokio::io::AsyncWrite + Unpin,
     T: Serialize,
 {
-    let body = serde_json::to_vec(&response)?;
-    let header = format!("Content-Length: {}\r\n\r\n", body.len());
-    writer.write_all(header.as_bytes()).await?;
+    let mut body = serde_json::to_vec(&response)?;
+    body.push(b'\n');
     writer.write_all(&body).await?;
     writer.flush().await?;
     Ok(())
