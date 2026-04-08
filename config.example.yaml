@@ -1,5 +1,5 @@
 raw_data_path: data/raw
-qdrant_url: http://127.0.0.1:6333
+qdrant_url: http://127.0.0.1:6334
 qdrant_collection: llm_wiki_chunks
 
 embedding:
