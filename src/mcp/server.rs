@@ -44,7 +44,8 @@ where
     {
         loop {
             let Some(request) = read_request(&mut reader).await? else {
-                break;
+                eprintln!("MCP client closed stdin (EOF). Shutting down process.");
+                std::process::exit(0);
             };
 
             if request.id.is_none() {
@@ -54,9 +55,6 @@ where
             let response = self.handle_request(request).await;
             write_response(&mut writer, response).await?;
         }
-
-        writer.flush().await?;
-        Ok(())
     }
 
     async fn handle_request(&self, request: JsonRpcRequest) -> JsonRpcResponse<Value> {
@@ -320,7 +318,13 @@ where
 
     loop {
         let mut line = String::new();
-        let bytes_read = reader.read_line(&mut line).await?;
+        let bytes_read = match reader.read_line(&mut line).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                eprintln!("Failed to read MCP stdin: {error}. Exiting process.");
+                std::process::exit(1);
+            }
+        };
         if bytes_read == 0 {
             return Ok(None);
         }

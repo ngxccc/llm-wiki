@@ -8,6 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 
 const DEBOUNCE_WINDOW: Duration = Duration::from_secs(2);
 const READ_RETRY_DELAY: Duration = Duration::from_millis(150);
@@ -18,6 +19,7 @@ pub async fn run_watcher(
     raw_dir: PathBuf,
     embedder: EmbeddingClient,
     qdrant: QdrantStore,
+    cancel_token: CancellationToken,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = mpsc::channel::<PathBuf>(1024);
 
@@ -44,7 +46,7 @@ pub async fn run_watcher(
         .watch(Path::new(&raw_dir), RecursiveMode::Recursive)
         .context("failed to watch raw data path")?;
 
-    run_batch_consumer(&mut event_rx, embedder, qdrant).await
+    run_batch_consumer(&mut event_rx, embedder, qdrant, cancel_token).await
 }
 
 /// Event micro-batching consumer.
@@ -55,6 +57,7 @@ async fn run_batch_consumer(
     event_rx: &mut mpsc::Receiver<PathBuf>,
     embedder: EmbeddingClient,
     qdrant: QdrantStore,
+    cancel_token: CancellationToken,
 ) -> Result<()> {
     let mut pending = HashSet::<PathBuf>::new();
     let timer = tokio::time::sleep(Duration::from_secs(24 * 60 * 60));
@@ -62,6 +65,16 @@ async fn run_batch_consumer(
 
     loop {
         tokio::select! {
+            () = cancel_token.cancelled() => {
+                eprintln!("Watcher received shutdown signal.");
+                if !pending.is_empty() {
+                    let batch = pending.drain().collect::<Vec<_>>();
+                    eprintln!("Flushing {} pending file(s) before shutdown.", batch.len());
+                    process_batch(&batch, &embedder, &qdrant).await?;
+                }
+                eprintln!("Watcher shutdown completed.");
+                break;
+            }
             maybe_path = event_rx.recv() => {
                 let Some(path) = maybe_path else {
                     break;
