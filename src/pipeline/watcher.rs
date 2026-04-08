@@ -98,7 +98,7 @@ async fn process_batch(
         let chunks = chunk_markdown(&content, 800, 120);
 
         for (index, chunk) in chunks.into_iter().enumerate() {
-            let embedding = embedder.embed(&chunk).await?;
+            let embedding = embedder.embed_with_retry(&chunk, 3).await?;
             vectors.push(ChunkVector {
                 source_path: path.display().to_string(),
                 chunk_index: index,
