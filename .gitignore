@@ -35,3 +35,8 @@ qdrant-server.yaml
 .env
 .env.*
 *.log
+
+data/raw
+!data/raw/mcp-usage.md
+!data/raw/overview.md
+!data/raw/rust-notes.md
