@@ -60,7 +60,66 @@ curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 source "$HOME/.cargo/env"
 ```
 
-## 5. Setup nhanh
+## 5. Development bootstrap
+
+Mục này dành cho dev setup máy mới từ đầu (fresh machine).
+
+### 5.1 Tool bắt buộc
+
+1. Git
+2. Rust stable qua `rustup`
+3. C toolchain cơ bản cho OS hiện tại
+
+### 5.2 Tool theo use-case
+
+1. Cross-build Windows từ Linux: `mingw-w64`
+2. Linux static build từ Windows: target `x86_64-unknown-linux-musl`
+3. Qdrant runtime (local hoặc remote)
+4. Embedding backend (Ollama / LiteLLM / vLLM gateway)
+
+### 5.3 Cài nhanh theo OS
+
+Linux (Ubuntu/Debian):
+
+```bash
+sudo apt update
+sudo apt install -y build-essential git curl pkg-config
+curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+source "$HOME/.cargo/env"
+```
+
+macOS (Homebrew):
+
+```bash
+brew install git rustup-init
+rustup-init -y --default-toolchain stable
+source "$HOME/.cargo/env"
+```
+
+Windows (PowerShell + winget):
+
+```powershell
+winget install --id Git.Git -e
+winget install --id Rustlang.Rustup -e
+```
+
+### 5.4 Verify môi trường
+
+```bash
+rustup --version
+rustc --version
+cargo --version
+cargo check
+```
+
+### 5.5 Optional nhưng khuyến nghị
+
+```bash
+rustup component add rustfmt clippy
+./scripts/setup-security.sh
+```
+
+## 6. Setup nhanh
 
 ```bash
 git clone <repo-url>
@@ -73,7 +132,7 @@ cd llm-wiki
 cargo check
 ```
 
-## 6. Cấu hình `config.yaml`
+## 7. Cấu hình `config.yaml`
 
 Ứng dụng load file bằng:
 
@@ -106,7 +165,7 @@ embedding:
  base_url: http://192.168.1.10:11434
 ```
 
-## 7. Security và Integrity
+## 8. Security và Integrity
 
 ### 7.1 Read-only data source
 
@@ -125,7 +184,7 @@ Hook local sẽ gọi [scripts/pre-commit.sh](scripts/pre-commit.sh), gồm:
 
 Script có fallback tìm `cargo` ở `~/.cargo/bin/cargo` nếu PATH tối giản.
 
-## 8. Ingestion Pipeline
+## 9. Ingestion Pipeline
 
 Luồng ingest trong [src/pipeline/watcher.rs](src/pipeline/watcher.rs):
 
@@ -140,7 +199,7 @@ Hardening khi đọc file:
 - Kiểm tra kích thước file ổn định (2 lần metadata cách nhau 100ms) trước khi đọc
 - Log warning ra `stderr`
 
-## 9. MCP Server
+## 10. MCP Server
 
 Luồng MCP trong [src/mcp/server.rs](src/mcp/server.rs):
 
@@ -161,7 +220,7 @@ Lưu ý quan trọng:
 - Không dùng `println!` để log debug trong runtime MCP
 - Chỉ log qua `stderr` (`eprintln!`) để không làm hỏng protocol trên stdout
 
-## 10. Chạy dự án
+## 11. Chạy dự án
 
 ```bash
 cargo run
@@ -174,7 +233,7 @@ App sẽ:
 3. Spawn watcher task
 4. Spawn MCP server task
 
-## 11. Build cross-platform
+## 12. Build cross-platform
 
 ### 11.1 Build dựa trên môi trường development
 
@@ -212,7 +271,7 @@ cargo build --target x86_64-pc-windows-gnu --release
 # File sẽ là: target/x86_64-pc-windows-gnu/release/llm-wiki.exe
 ```
 
-## 12. Development commands
+## 13. Development commands
 
 ```bash
 # Format
@@ -225,7 +284,7 @@ cargo clippy -- -D warnings -W clippy::pedantic -W clippy::await_holding_lock -W
 cargo test
 ```
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 ### `cargo: command not found` khi commit
 
@@ -241,7 +300,7 @@ cargo test
 - Kiểm tra `qdrant_url`, collection name, network connectivity
 - Kiểm tra embedding endpoint trả đúng JSON có field `embedding: [f32, ...]`
 
-## 14. Trạng thái hiện tại
+## 15. Trạng thái hiện tại
 
 - Đã có khung đầy đủ watcher + MCP + cache + qdrant integration
 - Đã có security bootstrap script và pre-commit gate
