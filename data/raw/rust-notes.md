@@ -1,6 +1,7 @@
 # Rust Notes
 
 Important runtime details for LLM Wiki:
+
 - Use `tokio` for async tasks
 - Keep MCP logging on stderr only
 - Use retry/backoff when the embedding backend is unavailable
