@@ -1,6 +1,8 @@
+mod cache;
 mod mcp;
 
-use mcp::server::{McpServer, StaticSearchBackend};
+use cache::semantic::SemanticCache;
+use mcp::server::{CachedSearchBackend, McpServer, StaticSearchBackend};
 use tokio::task;
 
 #[tokio::main]
@@ -10,7 +12,9 @@ async fn main() {
     });
 
     let mcp_server = task::spawn(async {
-        let server = McpServer::new(StaticSearchBackend);
+        let cache = SemanticCache::new(128, 64);
+        let backend = CachedSearchBackend::new(cache, StaticSearchBackend);
+        let server = McpServer::new(backend);
         let _ = server.run_stdio().await;
     });
 

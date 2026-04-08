@@ -1,3 +1,4 @@
+use crate::cache::semantic::{CacheOutcome, SemanticCache};
 use crate::mcp::protocol::{
     CallToolResult, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
     SearchWikiArguments, ServerCapabilities, ServerInfo, ToolContent, ToolDefinition,
@@ -205,11 +206,46 @@ pub trait WikiSearchBackend {
     fn search(&self, query: &str) -> Result<String, McpError>;
 }
 
+pub trait FreshSearchProvider {
+    fn fetch(&self, query: &str) -> Result<String, McpError>;
+}
+
+pub struct CachedSearchBackend<P> {
+    cache: SemanticCache<String>,
+    provider: P,
+}
+
+impl<P> CachedSearchBackend<P> {
+    pub fn new(cache: SemanticCache<String>, provider: P) -> Self {
+        Self { cache, provider }
+    }
+}
+
+impl<P> WikiSearchBackend for CachedSearchBackend<P>
+where
+    P: FreshSearchProvider,
+{
+    fn search(&self, query: &str) -> Result<String, McpError> {
+        let embedding = embed_query(query, self.cache.vector_dimension());
+
+        match self.cache.probe(query, &embedding) {
+            CacheOutcome::SureHit { value } | CacheOutcome::GreyZone { value } => {
+                Ok((*value).clone())
+            }
+            CacheOutcome::Miss => {
+                let fresh = self.provider.fetch(query)?;
+                self.cache.insert(query, &embedding, fresh.clone());
+                Ok(fresh)
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct StaticSearchBackend;
 
-impl WikiSearchBackend for StaticSearchBackend {
-    fn search(&self, query: &str) -> Result<String, McpError> {
+impl FreshSearchProvider for StaticSearchBackend {
+    fn fetch(&self, query: &str) -> Result<String, McpError> {
         Ok(format!("search_wiki is wired for '{query}', but the cache and Qdrant backend will be added in later steps."))
     }
 }
@@ -293,4 +329,26 @@ where
     writer.write_all(&body).await?;
     writer.flush().await?;
     Ok(())
+}
+
+fn embed_query(query: &str, dimensions: usize) -> Vec<f32> {
+    let mut vector = vec![0.0_f32; dimensions.max(1)];
+
+    for (index, byte) in query.bytes().enumerate() {
+        let slot = index % vector.len();
+        vector[slot] += (f32::from(byte) / 255.0) * 2.0 - 1.0;
+    }
+
+    let norm = vector
+        .iter()
+        .map(|component| component * component)
+        .sum::<f32>()
+        .sqrt();
+    if norm > 0.0 {
+        for component in &mut vector {
+            *component /= norm;
+        }
+    }
+
+    vector
 }
