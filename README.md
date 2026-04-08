@@ -181,12 +181,60 @@ embedding:
  timeout_secs: 30
 ```
 
+Bạn có thể copy trực tiếp từ file mẫu [config.example.yaml](config.example.yaml):
+
+```bash
+cp config.example.yaml config.yaml
+```
+
 Ví dụ chỉ override `base_url` để cắm host khác:
 
 ```yaml
 embedding:
  base_url: http://192.168.1.10:11434
 ```
+
+### 7.1 Config reference (app)
+
+- `raw_data_path`
+  - Mục đích: thư mục markdown nguồn để watcher ingest.
+  - Default: `data/raw`
+  - Override bằng env: `LLM_WIKI_RAW_DATA_PATH`
+
+- `qdrant_url`
+  - Mục đích: URL để app kết nối Qdrant.
+  - Khuyến nghị local: `http://127.0.0.1:6333` (HTTP API)
+
+- `qdrant_collection`
+  - Mục đích: tên collection chứa vectors/chunks.
+  - Default: `llm_wiki_chunks`
+
+- `embedding.base_url`
+  - Mục đích: host backend embedding (Ollama/LiteLLM/vLLM gateway).
+
+- `embedding.endpoint`
+  - Mục đích: path API embedding trên backend.
+
+- `embedding.model`
+  - Mục đích: model embedding sử dụng khi gọi API.
+
+- `embedding.timeout_secs`
+  - Mục đích: timeout cho mỗi HTTP request embedding.
+
+### 7.2 Config reference (Qdrant server)
+
+Nếu bạn chạy Qdrant binary thay vì Docker, dùng file mẫu [qdrant-server.example.yaml](qdrant-server.example.yaml):
+
+```bash
+cp qdrant-server.example.yaml qdrant-server.yaml
+qdrant --config-path ./qdrant-server.yaml
+```
+
+Giải thích nhanh:
+
+- `storage.storage_path`: nơi Qdrant lưu dữ liệu local.
+- `service.http_port`: cổng HTTP (mặc định app nên trỏ vào cổng này).
+- `service.grpc_port`: cổng gRPC cho các client cần gRPC trực tiếp.
 
 ## 8. Dùng thực tế để test MCP
 

@@ -1,0 +1,9 @@
+raw_data_path: data/raw
+qdrant_url: http://127.0.0.1:6333
+qdrant_collection: llm_wiki_chunks
+
+embedding:
+  base_url: http://127.0.0.1:11434
+  endpoint: /api/embeddings
+  model: nomic-embed-text
+  timeout_secs: 30
