@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const JSON_RPC_VERSION: &str = "2.0";
-pub const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
