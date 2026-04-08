@@ -21,7 +21,9 @@ target
 #.idea/
 
 # Local Qdrant runtime data
+snapshots/
 qdrant_data/
+static/
 
 .qdrant-initialized
 
