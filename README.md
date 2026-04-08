@@ -1,4 +1,4 @@
-# llm-wiki
+# LLM Wiki
 
 Local-first Personal Knowledge Management (PKM) system theo kiến trúc Event-Driven RAG, expose qua MCP (Model Context Protocol) trên `stdio` để IDE agent (Copilot/Cursor) gọi tool tìm kiếm.
 
