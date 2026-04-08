@@ -146,12 +146,15 @@ Luồng MCP trong [src/mcp/server.rs](src/mcp/server.rs):
 
 1. Giao tiếp JSON-RPC 2.0 qua `stdin/stdout`
 2. Method hỗ trợ:
-  - `initialize`
-  - `tools/list`
-  - `tools/call`
+
+   - `initialize`
+   - `tools/list`
+   - `tools/call`
+
 3. Tool hiện có: `search_wiki`
-  - Input schema: `{ query: string }`
-  - Search path: semantic cache -> (miss) embed query -> Qdrant top 5
+
+- Input schema: `{ query: string }`
+- Search path: semantic cache -> (miss) embed query -> Qdrant top 5
 
 Lưu ý quan trọng:
 
