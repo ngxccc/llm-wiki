@@ -174,7 +174,45 @@ App sẽ:
 3. Spawn watcher task
 4. Spawn MCP server task
 
-## 11. Development commands
+## 11. Build cross-platform
+
+### 11.1 Build trên Windows
+
+Muốn có file `.exe`:
+
+```bash
+cargo build --release
+# File app sẽ nằm ở: target/release/llm-wiki.exe
+```
+
+Muốn build ra file Linux từ máy Windows bằng MUSL để giảm phụ thuộc thư viện hệ điều hành:
+
+```bash
+# 1. Tải target linux về máy
+rustup target add x86_64-unknown-linux-musl
+
+# 2. Build ép sang chuẩn Linux
+cargo build --target x86_64-unknown-linux-musl --release
+# File app sẽ nằm ở: target/x86_64-unknown-linux-musl/release/llm-wiki
+```
+
+### 11.2 Build trên Linux/macOS
+
+Muốn build ra file `.exe` cho máy Windows:
+
+```bash
+# 1. Tải target windows
+rustup target add x86_64-pc-windows-gnu
+
+# 2. Cài thêm bộ biên dịch C cho Windows (trên Ubuntu)
+sudo apt install mingw-w64
+
+# 3. Build ép sang Windows
+cargo build --target x86_64-pc-windows-gnu --release
+# File sẽ là: target/x86_64-pc-windows-gnu/release/llm-wiki.exe
+```
+
+## 12. Development commands
 
 ```bash
 # Format
@@ -187,7 +225,7 @@ cargo clippy -- -D warnings -W clippy::pedantic -W clippy::await_holding_lock -W
 cargo test
 ```
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### `cargo: command not found` khi commit
 
@@ -203,7 +241,7 @@ cargo test
 - Kiểm tra `qdrant_url`, collection name, network connectivity
 - Kiểm tra embedding endpoint trả đúng JSON có field `embedding: [f32, ...]`
 
-## 13. Trạng thái hiện tại
+## 14. Trạng thái hiện tại
 
 - Đã có khung đầy đủ watcher + MCP + cache + qdrant integration
 - Đã có security bootstrap script và pre-commit gate
