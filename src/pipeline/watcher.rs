@@ -4,11 +4,15 @@ use crate::pipeline::embedder::EmbeddingClient;
 use anyhow::{Context, Result};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 
 const DEBOUNCE_WINDOW: Duration = Duration::from_secs(2);
+const READ_RETRY_DELAY: Duration = Duration::from_millis(150);
+const SIZE_STABILITY_DELAY: Duration = Duration::from_millis(100);
+const MAX_READ_RETRIES: usize = 5;
 
 pub async fn run_watcher(
     raw_dir: PathBuf,
@@ -90,9 +94,7 @@ async fn process_batch(
     let mut vectors = Vec::new();
 
     for path in paths {
-        let content = tokio::fs::read_to_string(path)
-            .await
-            .with_context(|| format!("failed to read file {}", path.display()))?;
+        let content = read_markdown_with_retry(path).await?;
         let chunks = chunk_markdown(&content, 800, 120);
 
         for (index, chunk) in chunks.into_iter().enumerate() {
@@ -108,4 +110,76 @@ async fn process_batch(
 
     qdrant.bulk_upsert(&vectors).await?;
     Ok(())
+}
+
+async fn read_markdown_with_retry(path: &Path) -> Result<String> {
+    let mut last_error: Option<io::Error> = None;
+
+    for attempt in 1..=MAX_READ_RETRIES {
+        match has_stable_size(path).await {
+            Ok(true) => {}
+            Ok(false) => {
+                eprintln!(
+                    "warning: file {} is still changing (attempt {attempt}/{MAX_READ_RETRIES}), retrying",
+                    path.display()
+                );
+                tokio::time::sleep(READ_RETRY_DELAY).await;
+                continue;
+            }
+            Err(error) if is_retryable_io(error.kind()) => {
+                eprintln!(
+                    "warning: failed to stat {} ({error}) (attempt {attempt}/{MAX_READ_RETRIES}), retrying",
+                    path.display()
+                );
+                last_error = Some(error);
+                tokio::time::sleep(READ_RETRY_DELAY).await;
+                continue;
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to stat file {}", path.display()));
+            }
+        }
+
+        match tokio::fs::read_to_string(path).await {
+            Ok(content) => return Ok(content),
+            Err(error) if is_retryable_io(error.kind()) => {
+                eprintln!(
+                    "warning: failed to read {} ({error}) (attempt {attempt}/{MAX_READ_RETRIES}), retrying",
+                    path.display()
+                );
+                last_error = Some(error);
+                tokio::time::sleep(READ_RETRY_DELAY).await;
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to read file {}", path.display()));
+            }
+        }
+    }
+
+    if let Some(error) = last_error {
+        return Err(error)
+            .with_context(|| format!("exhausted retries while reading {}", path.display()));
+    }
+
+    anyhow::bail!("exhausted retries while reading {}", path.display());
+}
+
+async fn has_stable_size(path: &Path) -> io::Result<bool> {
+    let first = tokio::fs::metadata(path).await?;
+    let first_len = first.len();
+    tokio::time::sleep(SIZE_STABILITY_DELAY).await;
+    let second = tokio::fs::metadata(path).await?;
+    Ok(first_len == second.len())
+}
+
+fn is_retryable_io(kind: io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        io::ErrorKind::WouldBlock
+            | io::ErrorKind::Interrupted
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::PermissionDenied
+    )
 }
