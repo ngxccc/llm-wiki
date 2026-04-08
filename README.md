@@ -53,6 +53,14 @@ Yêu cầu tối thiểu:
 2. Qdrant chạy local hoặc remote
 3. Embedding endpoint tương thích payload JSON (ví dụ Ollama/LiteLLM/vLLM gateway)
 
+Nếu bạn muốn chạy Qdrant local bằng Docker để tránh crash khi app khởi động, dùng:
+
+```bash
+docker run -d -p 6333:6333 -p 6334:6334 -v $(pwd)/qdrant_data:/qdrant/storage qdrant/qdrant
+```
+
+Lệnh này sẽ expose Qdrant HTTP/gRPC và persist data vào thư mục `qdrant_data/` trong workspace hiện tại.
+
 Ví dụ cài Rust:
 
 ```bash
