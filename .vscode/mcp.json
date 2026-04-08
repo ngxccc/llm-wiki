@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "llm-wiki": {
+      "type": "stdio",
+      "command": "cargo",
+      "args": ["run", "--quiet"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "LLM_WIKI_RAW_DATA_PATH": "${workspaceFolder}/data/raw"
+      }
+    }
+  }
+}

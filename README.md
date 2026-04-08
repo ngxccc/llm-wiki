@@ -130,6 +130,16 @@ rustup component add rustfmt clippy
 export LLM_WIKI_RAW_DATA_PATH=/path/to/your/raw-data
 ```
 
+### 5.6 VS Code MCP setup
+
+Workspace đã có file cấu hình MCP ở [.vscode/mcp.json](.vscode/mcp.json) để Copilot/Cursor chạy server qua stdio.
+
+Nó trỏ vào `cargo run --quiet` và mặc định expose `data/raw/` từ gốc repository. Nếu bạn muốn test nhanh ngay sau khi clone:
+
+1. Chạy Qdrant local bằng Docker.
+2. Chạy `./scripts/setup-security.sh` để tạo `data/raw/` và cài hook.
+3. Mở project trong VS Code rồi bật MCP server từ cấu hình workspace.
+
 ## 6. Setup nhanh
 
 ```bash
@@ -178,16 +188,35 @@ embedding:
  base_url: http://192.168.1.10:11434
 ```
 
-## 8. Security và Integrity
+## 8. Dùng thực tế để test MCP
 
-### 7.1 Read-only data source
+Trong repo đã có sample data ở [data/raw/](data/raw/) để bạn test ngay.
+
+Luồng test nhanh:
+
+1. Start Qdrant local bằng Docker.
+2. Chạy `cargo run` ở root project hoặc để VS Code gọi server qua [.vscode/mcp.json](.vscode/mcp.json).
+3. Dùng tool `search_wiki` với query như:
+   - `Where is the raw markdown data stored?`
+   - `How do I start the MCP server?`
+   - `What command runs Qdrant locally?`
+
+Các file sample hiện có:
+
+- [data/raw/overview.md](data/raw/overview.md)
+- [data/raw/mcp-usage.md](data/raw/mcp-usage.md)
+- [data/raw/rust-notes.md](data/raw/rust-notes.md)
+
+## 9. Security và Integrity
+
+### 9.1 Read-only data source
 
 Script [scripts/setup-security.sh](scripts/setup-security.sh) sẽ:
 
 1. Tạo `data/raw/`
 2. Áp quyền read-only cho `data/raw/` trên Linux/macOS (`chmod -R a-w`)
 
-### 7.2 Pre-commit gate
+### 9.2 Pre-commit gate
 
 Hook local sẽ gọi [scripts/pre-commit.sh](scripts/pre-commit.sh), gồm:
 
@@ -197,7 +226,7 @@ Hook local sẽ gọi [scripts/pre-commit.sh](scripts/pre-commit.sh), gồm:
 
 Script có fallback tìm `cargo` ở `~/.cargo/bin/cargo` nếu PATH tối giản.
 
-## 9. Ingestion Pipeline
+## 10. Ingestion Pipeline
 
 Luồng ingest trong [src/pipeline/watcher.rs](src/pipeline/watcher.rs):
 
@@ -212,7 +241,7 @@ Hardening khi đọc file:
 - Kiểm tra kích thước file ổn định (2 lần metadata cách nhau 100ms) trước khi đọc
 - Log warning ra `stderr`
 
-## 10. MCP Server
+## 11. MCP Server
 
 Luồng MCP trong [src/mcp/server.rs](src/mcp/server.rs):
 
@@ -233,7 +262,7 @@ Lưu ý quan trọng:
 - Không dùng `println!` để log debug trong runtime MCP
 - Chỉ log qua `stderr` (`eprintln!`) để không làm hỏng protocol trên stdout
 
-## 11. Chạy dự án
+## 12. Chạy dự án
 
 ```bash
 cargo run
@@ -246,9 +275,9 @@ App sẽ:
 3. Spawn watcher task
 4. Spawn MCP server task
 
-## 12. Build cross-platform
+## 13. Build cross-platform
 
-### 11.1 Build dựa trên môi trường development
+### 13.1 Build dựa trên môi trường development
 
 Sẽ build ra file `.exe` hoặc ELF tuỳ vào môi trường dev:
 
@@ -268,7 +297,7 @@ cargo build --target x86_64-unknown-linux-musl --release
 # File app sẽ nằm ở: target/x86_64-unknown-linux-musl/release/llm-wiki
 ```
 
-### 11.2 Build trên Linux/macOS
+### 13.2 Build trên Linux/macOS
 
 Muốn build ra file `.exe` cho máy Windows:
 
@@ -284,7 +313,7 @@ cargo build --target x86_64-pc-windows-gnu --release
 # File sẽ là: target/x86_64-pc-windows-gnu/release/llm-wiki.exe
 ```
 
-## 13. Development commands
+## 14. Development commands
 
 ```bash
 # Format
@@ -297,7 +326,7 @@ cargo clippy -- -D warnings -W clippy::pedantic -W clippy::await_holding_lock -W
 cargo test
 ```
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 ### `cargo: command not found` khi commit
 
@@ -313,7 +342,7 @@ cargo test
 - Kiểm tra `qdrant_url`, collection name, network connectivity
 - Kiểm tra embedding endpoint trả đúng JSON có field `embedding: [f32, ...]`
 
-## 15. Trạng thái hiện tại
+## 16. Trạng thái hiện tại
 
 - Đã có khung đầy đủ watcher + MCP + cache + qdrant integration
 - Đã có security bootstrap script và pre-commit gate
