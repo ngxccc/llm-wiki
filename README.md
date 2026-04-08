@@ -176,13 +176,13 @@ App sẽ:
 
 ## 11. Build cross-platform
 
-### 11.1 Build trên Windows
+### 11.1 Build dựa trên môi trường development
 
-Muốn có file `.exe`:
+Sẽ build ra file `.exe` hoặc ELF tuỳ vào môi trường dev:
 
 ```bash
 cargo build --release
-# File app sẽ nằm ở: target/release/llm-wiki.exe
+# File app sẽ nằm ở: target/release
 ```
 
 Muốn build ra file Linux từ máy Windows bằng MUSL để giảm phụ thuộc thư viện hệ điều hành:
