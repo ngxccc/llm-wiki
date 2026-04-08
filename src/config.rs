@@ -3,33 +3,49 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
 pub struct AppConfig {
+    #[serde(default = "default_raw_data_path")]
     pub raw_data_path: PathBuf,
+    #[serde(default = "default_qdrant_url")]
     pub qdrant_url: String,
+    #[serde(default = "default_qdrant_collection")]
     pub qdrant_collection: String,
+    #[serde(default)]
     pub embedding: EmbeddingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
 pub struct EmbeddingConfig {
+    #[serde(default = "default_embedding_base_url")]
     pub base_url: String,
+    #[serde(default = "default_embedding_endpoint")]
     pub endpoint: String,
+    #[serde(default = "default_embedding_model")]
     pub model: String,
+    #[serde(default = "default_embedding_timeout_secs")]
     pub timeout_secs: u64,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            raw_data_path: PathBuf::from("data/raw"),
-            qdrant_url: "http://127.0.0.1:6334".to_string(),
-            qdrant_collection: "llm_wiki_chunks".to_string(),
-            embedding: EmbeddingConfig {
-                base_url: "http://127.0.0.1:11434".to_string(),
-                endpoint: "/api/embeddings".to_string(),
-                model: "nomic-embed-text".to_string(),
-                timeout_secs: 30,
-            },
+            raw_data_path: default_raw_data_path(),
+            qdrant_url: default_qdrant_url(),
+            qdrant_collection: default_qdrant_collection(),
+            embedding: EmbeddingConfig::default(),
+        }
+    }
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_embedding_base_url(),
+            endpoint: default_embedding_endpoint(),
+            model: default_embedding_model(),
+            timeout_secs: default_embedding_timeout_secs(),
         }
     }
 }
@@ -86,4 +102,32 @@ fn write_template(path: &Path, config: &AppConfig) -> io::Result<()> {
     let body = serde_yaml::to_string(config)
         .map_err(|error| io::Error::other(format!("failed to serialize template: {error}")))?;
     std::fs::write(path, body)
+}
+
+fn default_raw_data_path() -> PathBuf {
+    PathBuf::from("data/raw")
+}
+
+fn default_qdrant_url() -> String {
+    "http://127.0.0.1:6334".to_string()
+}
+
+fn default_qdrant_collection() -> String {
+    "llm_wiki_chunks".to_string()
+}
+
+fn default_embedding_base_url() -> String {
+    "http://127.0.0.1:11434".to_string()
+}
+
+fn default_embedding_endpoint() -> String {
+    "/api/embeddings".to_string()
+}
+
+fn default_embedding_model() -> String {
+    "nomic-embed-text".to_string()
+}
+
+fn default_embedding_timeout_secs() -> u64 {
+    30
 }
