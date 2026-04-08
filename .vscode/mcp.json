@@ -2,11 +2,12 @@
   "servers": {
     "llm-wiki": {
       "type": "stdio",
-      "command": "cargo",
-      "args": ["run", "--quiet"],
+      "command": "${workspaceFolder}/target/debug/llm-wiki",
+      "args": [],
       "cwd": "${workspaceFolder}",
       "env": {
-        "LLM_WIKI_RAW_DATA_PATH": "${workspaceFolder}/data/raw"
+        "LLM_WIKI_RAW_DATA_PATH": "${workspaceFolder}/data/raw",
+        "RUST_BACKTRACE": "1"
       }
     }
   }
