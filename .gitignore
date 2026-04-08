@@ -19,3 +19,17 @@ target
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Local Qdrant runtime data
+qdrant_data/
+
+.qdrant-initialized
+
+# Local app/server config generated for developer machines
+config.yaml
+qdrant-server.yaml
+
+# Optional local env/log artifacts
+.env
+.env.*
+*.log
