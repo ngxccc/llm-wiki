@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
 
+const RAW_DATA_PATH_ENV: &str = "LLM_WIKI_RAW_DATA_PATH";
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -54,7 +56,7 @@ impl AppConfig {
     pub fn load_or_create(path: impl AsRef<Path>) -> Self {
         let path = path.as_ref();
 
-        match std::fs::read_to_string(path) {
+        let mut config = match std::fs::read_to_string(path) {
             Ok(content) => match serde_yaml::from_str::<Self>(&content) {
                 Ok(config) => config,
                 Err(error) => {
@@ -88,7 +90,13 @@ impl AppConfig {
                 );
                 Self::default()
             }
+        };
+
+        if let Some(raw_data_path) = raw_data_path_from_env() {
+            config.raw_data_path = raw_data_path;
         }
+
+        config
     }
 }
 
@@ -130,4 +138,11 @@ fn default_embedding_model() -> String {
 
 fn default_embedding_timeout_secs() -> u64 {
     30
+}
+
+fn raw_data_path_from_env() -> Option<PathBuf> {
+    match std::env::var_os(RAW_DATA_PATH_ENV) {
+        Some(value) if !value.is_empty() => Some(PathBuf::from(value)),
+        _ => None,
+    }
 }

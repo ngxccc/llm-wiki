@@ -125,6 +125,9 @@ cargo check
 ```bash
 rustup component add rustfmt clippy
 ./scripts/setup-security.sh
+
+# Override vị trí lưu data/raw nếu cần
+export LLM_WIKI_RAW_DATA_PATH=/path/to/your/raw-data
 ```
 
 ## 6. Setup nhanh
@@ -145,6 +148,8 @@ cargo check
 Ứng dụng load file bằng:
 
 - `AppConfig::load_or_create("config.yaml")`
+
+Mặc định app sẽ đọc và ghi dữ liệu ở `data/raw/` ngay tại gốc project. Nếu bạn chạy file build từ thư mục gốc repository thì nó vẫn dùng đúng path này. Muốn đổi vị trí lưu `data/raw`, set biến môi trường `LLM_WIKI_RAW_DATA_PATH`; nếu không set, app sẽ fallback về `data/raw/`.
 
 Behavior:
 
