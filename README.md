@@ -167,25 +167,13 @@ Behavior:
 2. Nếu parse lỗi: fallback `Default`, log warning ra `stderr`.
 3. Có thể override từng phần (partial override), không cần khai báo đủ tất cả field.
 
-Mẫu cấu hình:
-
-```yaml
-raw_data_path: data/raw
-qdrant_url: http://127.0.0.1:6334
-qdrant_collection: llm_wiki_chunks
-
-embedding:
- base_url: http://127.0.0.1:11434
- endpoint: /api/embeddings
- model: nomic-embed-text
- timeout_secs: 30
-```
-
-Bạn có thể copy trực tiếp từ file mẫu [config.example.yaml](config.example.yaml):
+Mẫu cấu hình: [config.example.yaml](config.example.yaml)
 
 ```bash
 cp config.example.yaml config.yaml
 ```
+
+Khuyến nghị production: chạy qua AI Gateway (ví dụ LiteLLM) để app chỉ dùng một chuẩn OpenAI-style (`/v1/embeddings`, payload `input` dạng mảng), còn việc map sang provider cụ thể (Ollama/Cohere/OpenAI) do gateway xử lý.
 
 Ví dụ chỉ override `base_url` để cắm host khác:
 
@@ -220,6 +208,18 @@ embedding:
 
 - `embedding.timeout_secs`
   - Mục đích: timeout cho mỗi HTTP request embedding.
+
+- `embedding.api_key`
+  - Mục đích: Bearer token gửi cho gateway/provider nếu endpoint yêu cầu auth.
+
+- `embedding.encoding_format`
+  - Mục đích: định dạng embedding response mong muốn (`float` hoặc `base64` nếu gateway hỗ trợ).
+
+- `embedding.dimensions`
+  - Mục đích: yêu cầu giảm chiều vector (chỉ có hiệu lực khi model/gateway hỗ trợ).
+
+- `embedding.max_batch_size`
+  - Mục đích: giới hạn số chunk mỗi request để tránh payload quá lớn.
 
 ### 7.2 Config reference (Qdrant server)
 
