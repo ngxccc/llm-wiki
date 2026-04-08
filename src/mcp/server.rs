@@ -1,9 +1,12 @@
 use crate::cache::semantic::{CacheOutcome, SemanticCache};
+use crate::db::qdrant::QdrantStore;
 use crate::mcp::protocol::{
     CallToolResult, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
     SearchWikiArguments, ServerCapabilities, ServerInfo, ToolContent, ToolDefinition,
     ToolsCallParams, ToolsCapability, ToolsListResult, JSON_RPC_VERSION,
 };
+use crate::pipeline::embedder::EmbeddingClient;
+use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fmt::{Display, Formatter};
@@ -48,7 +51,7 @@ where
                 continue;
             }
 
-            let response = self.handle_request(request);
+            let response = self.handle_request(request).await;
             write_response(&mut writer, response).await?;
         }
 
@@ -56,7 +59,7 @@ where
         Ok(())
     }
 
-    fn handle_request(&self, request: JsonRpcRequest) -> JsonRpcResponse<Value> {
+    async fn handle_request(&self, request: JsonRpcRequest) -> JsonRpcResponse<Value> {
         let id = request.id.unwrap_or(Value::Null);
 
         if request.jsonrpc != JSON_RPC_VERSION {
@@ -117,7 +120,7 @@ where
                     error: None,
                 }
             }
-            "tools/call" => self.handle_call_tool(id, request.params),
+            "tools/call" => self.handle_call_tool(id, request.params).await,
             _ => JsonRpcResponse {
                 jsonrpc: JSON_RPC_VERSION,
                 id,
@@ -131,7 +134,7 @@ where
         }
     }
 
-    fn handle_call_tool(&self, id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    async fn handle_call_tool(&self, id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         let parsed = params
             .and_then(|value| serde_json::from_value::<ToolsCallParams>(value).ok())
             .ok_or("Invalid tools/call request")
@@ -167,7 +170,7 @@ where
             }
         };
 
-        let search_result = self.search_backend.search(&query);
+        let search_result = self.search_backend.search(&query).await;
 
         match search_result {
             Ok(summary) => {
@@ -202,12 +205,26 @@ where
     }
 }
 
+#[async_trait]
 pub trait WikiSearchBackend {
-    fn search(&self, query: &str) -> Result<String, McpError>;
+    async fn search(&self, query: &str) -> Result<String, McpError>;
 }
 
+#[async_trait]
 pub trait FreshSearchProvider {
-    fn fetch(&self, query: &str) -> Result<String, McpError>;
+    async fn fetch(&self, query: &str) -> Result<String, McpError>;
+}
+
+#[derive(Clone)]
+pub struct QdrantSearchProvider {
+    qdrant: QdrantStore,
+    embedder: EmbeddingClient,
+}
+
+impl QdrantSearchProvider {
+    pub fn new(qdrant: QdrantStore, embedder: EmbeddingClient) -> Self {
+        Self { qdrant, embedder }
+    }
 }
 
 pub struct CachedSearchBackend<P> {
@@ -221,11 +238,12 @@ impl<P> CachedSearchBackend<P> {
     }
 }
 
+#[async_trait]
 impl<P> WikiSearchBackend for CachedSearchBackend<P>
 where
-    P: FreshSearchProvider,
+    P: FreshSearchProvider + Send + Sync,
 {
-    fn search(&self, query: &str) -> Result<String, McpError> {
+    async fn search(&self, query: &str) -> Result<String, McpError> {
         let embedding = embed_query(query, self.cache.vector_dimension());
 
         match self.cache.probe(query, &embedding) {
@@ -233,7 +251,7 @@ where
                 Ok((*value).clone())
             }
             CacheOutcome::Miss => {
-                let fresh = self.provider.fetch(query)?;
+                let fresh = self.provider.fetch(query).await?;
                 self.cache.insert(query, &embedding, fresh.clone());
                 Ok(fresh)
             }
@@ -241,12 +259,25 @@ where
     }
 }
 
-#[derive(Default)]
-pub struct StaticSearchBackend;
+#[async_trait]
+impl FreshSearchProvider for QdrantSearchProvider {
+    async fn fetch(&self, query: &str) -> Result<String, McpError> {
+        let query_embedding =
+            self.embedder.embed(query).await.map_err(|error| {
+                McpError::External(format!("embedding request failed: {error}"))
+            })?;
 
-impl FreshSearchProvider for StaticSearchBackend {
-    fn fetch(&self, query: &str) -> Result<String, McpError> {
-        Ok(format!("search_wiki is wired for '{query}', but the cache and Qdrant backend will be added in later steps."))
+        let search_result = self
+            .qdrant
+            .search(query_embedding, 5)
+            .await
+            .map_err(|error| McpError::External(format!("qdrant search failed: {error}")))?;
+
+        if search_result.is_empty() {
+            Ok("No wiki chunks matched the query.".to_string())
+        } else {
+            Ok(search_result.join("\n---\n"))
+        }
     }
 }
 
@@ -254,6 +285,7 @@ impl FreshSearchProvider for StaticSearchBackend {
 pub enum McpError {
     Io(io::Error),
     Json(serde_json::Error),
+    External(String),
 }
 
 impl Display for McpError {
@@ -261,6 +293,7 @@ impl Display for McpError {
         match self {
             Self::Io(error) => write!(f, "I/O error: {error}"),
             Self::Json(error) => write!(f, "JSON error: {error}"),
+            Self::External(error) => write!(f, "External error: {error}"),
         }
     }
 }
