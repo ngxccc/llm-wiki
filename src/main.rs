@@ -14,7 +14,7 @@ use tokio::task;
 
 #[tokio::main]
 async fn main() {
-    let config = AppConfig::default();
+    let config = AppConfig::load_or_create("config.yaml");
 
     let qdrant = match QdrantStore::new(&config.qdrant_url, config.qdrant_collection.clone()) {
         Ok(store) => store,
