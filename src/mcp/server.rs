@@ -1,7 +1,9 @@
 use crate::cache::semantic::{CacheOutcome, SemanticCache};
 use crate::db::qdrant::QdrantStore;
 use crate::mcp::protocol::{
-    CallToolResult, InitializeResult, JSON_RPC_VERSION, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LATEST_PROTOCOL_VERSION, SearchWikiArguments, ServerCapabilities, ServerInfo, ToolContent, ToolDefinition, ToolsCallParams, ToolsCapability, ToolsListResult
+    CallToolResult, InitializeResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    SearchWikiArguments, ServerCapabilities, ServerInfo, ToolContent, ToolDefinition,
+    ToolsCallParams, ToolsCapability, ToolsListResult, JSON_RPC_VERSION, LATEST_PROTOCOL_VERSION,
 };
 use crate::pipeline::embedder::EmbeddingClient;
 use async_trait::async_trait;
