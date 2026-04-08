@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 anyhow = "1"
+base64 = "0.22"
 notify = "8"
 qdrant-client = "1"
 # Tắt default-features để né OpenSSL, bật rustls-tls để build chéo dễ dàng

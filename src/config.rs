@@ -28,6 +28,11 @@ pub struct EmbeddingConfig {
     pub model: String,
     #[serde(default = "default_embedding_timeout_secs")]
     pub timeout_secs: u64,
+    pub api_key: Option<String>,
+    pub encoding_format: Option<String>,
+    pub dimensions: Option<usize>,
+    #[serde(default = "default_embedding_max_batch_size")]
+    pub max_batch_size: usize,
 }
 
 impl Default for AppConfig {
@@ -48,6 +53,10 @@ impl Default for EmbeddingConfig {
             endpoint: default_embedding_endpoint(),
             model: default_embedding_model(),
             timeout_secs: default_embedding_timeout_secs(),
+            api_key: None,
+            encoding_format: None,
+            dimensions: None,
+            max_batch_size: default_embedding_max_batch_size(),
         }
     }
 }
@@ -125,11 +134,11 @@ fn default_qdrant_collection() -> String {
 }
 
 fn default_embedding_base_url() -> String {
-    "http://127.0.0.1:11434".to_string()
+    "http://127.0.0.1:4000".to_string()
 }
 
 fn default_embedding_endpoint() -> String {
-    "/api/embeddings".to_string()
+    "/v1/embeddings".to_string()
 }
 
 fn default_embedding_model() -> String {
@@ -138,6 +147,10 @@ fn default_embedding_model() -> String {
 
 fn default_embedding_timeout_secs() -> u64 {
     30
+}
+
+fn default_embedding_max_batch_size() -> usize {
+    16
 }
 
 fn raw_data_path_from_env() -> Option<PathBuf> {

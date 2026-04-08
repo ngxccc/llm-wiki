@@ -128,7 +128,7 @@ async fn process_batch(
     eprintln!("watcher processing batch with {} file(s)", paths.len());
     let mut vectors = Vec::new();
 
-    for path in paths {
+    'file_loop: for path in paths {
         let content = match read_markdown_with_retry(path).await {
             Ok(content) => content,
             Err(error) => {
@@ -141,20 +141,29 @@ async fn process_batch(
         };
 
         let chunks = chunk_markdown(&content, 800, 120);
+        if chunks.is_empty() {
+            continue;
+        }
 
-        for (index, chunk) in chunks.into_iter().enumerate() {
-            let embedding = match embedder.embed_with_retry(&chunk, 3).await {
-                Ok(embedding) => embedding,
+        let chunk_refs = chunks.iter().map(String::as_str).collect::<Vec<_>>();
+        let mut embeddings = Vec::with_capacity(chunk_refs.len());
+        let max_batch_size = embedder.max_batch_size();
+
+        for chunk_batch in chunk_refs.chunks(max_batch_size) {
+            let mut batch_embeddings = match embedder.embed_batch_with_retry(chunk_batch, 3).await {
+                Ok(embeddings) => embeddings,
                 Err(error) => {
                     eprintln!(
-                        "watcher skipped chunk due to embedding failure (file: {}, chunk: {}): {error:#}",
-                        path.display(),
-                        index
+                        "watcher skipped file due to embedding batch failure (file: {}): {error:#}",
+                        path.display()
                     );
-                    continue;
+                    continue 'file_loop;
                 }
             };
+            embeddings.append(&mut batch_embeddings);
+        }
 
+        for (index, (chunk, embedding)) in chunks.into_iter().zip(embeddings).enumerate() {
             let embedding = if embedding.len() == QDRANT_VECTOR_DIMENSION {
                 embedding
             } else {
