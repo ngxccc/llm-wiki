@@ -24,25 +24,25 @@ Local-first Personal Knowledge Management (PKM) system theo kiến trúc Event-D
 
 ## 3. Kiến trúc module
 
-```
+```text
 src/
-	main.rs                # Boot toàn bộ task: watcher + MCP server
-	config.rs              # Load config.yaml (auto-create + fallback default)
-	mcp/
-		protocol.rs          # JSON-RPC models
-		server.rs            # MCP stdio server + tool routing
-	pipeline/
-		watcher.rs           # notify + debounce + micro-batch + retry read
-		chunker.rs           # chunk markdown
-		embedder.rs          # gọi embedding API
-	db/
-		qdrant.rs            # bulk upsert + search top-k
-	cache/
-		semantic.rs          # LRU semantic cache + quantization + trigram Jaccard
-		lsh.rs               # random-projection LSH
+ main.rs                # Boot toàn bộ task: watcher + MCP server
+ config.rs              # Load config.yaml (auto-create + fallback default)
+ mcp/
+  protocol.rs          # JSON-RPC models
+  server.rs            # MCP stdio server + tool routing
+ pipeline/
+  watcher.rs           # notify + debounce + micro-batch + retry read
+  chunker.rs           # chunk markdown
+  embedder.rs          # gọi embedding API
+ db/
+  qdrant.rs            # bulk upsert + search top-k
+ cache/
+  semantic.rs          # LRU semantic cache + quantization + trigram Jaccard
+  lsh.rs               # random-projection LSH
 scripts/
-	pre-commit.sh          # fmt + clippy(strict) + test
-	setup-security.sh      # harden data/raw + install hook local
+ pre-commit.sh          # fmt + clippy(strict) + test
+ setup-security.sh      # harden data/raw + install hook local
 ```
 
 ## 4. Prerequisites
@@ -93,17 +93,17 @@ qdrant_url: http://127.0.0.1:6334
 qdrant_collection: llm_wiki_chunks
 
 embedding:
-	base_url: http://127.0.0.1:11434
-	endpoint: /api/embeddings
-	model: nomic-embed-text
-	timeout_secs: 30
+ base_url: http://127.0.0.1:11434
+ endpoint: /api/embeddings
+ model: nomic-embed-text
+ timeout_secs: 30
 ```
 
 Ví dụ chỉ override `base_url` để cắm host khác:
 
 ```yaml
 embedding:
-	base_url: http://192.168.1.10:11434
+ base_url: http://192.168.1.10:11434
 ```
 
 ## 7. Security và Integrity
@@ -146,12 +146,12 @@ Luồng MCP trong [src/mcp/server.rs](src/mcp/server.rs):
 
 1. Giao tiếp JSON-RPC 2.0 qua `stdin/stdout`
 2. Method hỗ trợ:
-	 - `initialize`
-	 - `tools/list`
-	 - `tools/call`
+  - `initialize`
+  - `tools/list`
+  - `tools/call`
 3. Tool hiện có: `search_wiki`
-	 - Input schema: `{ query: string }`
-	 - Search path: semantic cache -> (miss) embed query -> Qdrant top 5
+  - Input schema: `{ query: string }`
+  - Search path: semantic cache -> (miss) embed query -> Qdrant top 5
 
 Lưu ý quan trọng:
 
