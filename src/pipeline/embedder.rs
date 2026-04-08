@@ -50,12 +50,12 @@ impl EmbeddingClient {
                 Err(error) => {
                     attempt += 1;
                     if attempt > max_retries {
-                        eprintln!("💀 Đã đưa file vào DLQ vì Ollama sập: {error}");
+                        eprintln!("The file has been moved to DLQ because Ollama crashed: {error}");
                         return Err(error);
                     }
 
                     let wait_time = base_delay * 2_u64.pow(attempt - 1);
-                    eprintln!("⚠️ Lỗi API. Thử lại lần {attempt} sau {wait_time} giây...");
+                    eprintln!("API error. Try again {attempt} after {wait_time} seconds...");
                     sleep(Duration::from_secs(wait_time)).await;
                 }
             }
