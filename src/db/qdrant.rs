@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
+use qdrant_client::qdrant::vectors_config::Config;
 use qdrant_client::qdrant::{value::Kind, PointStruct, SearchPoints, UpsertPoints, Value};
+use qdrant_client::qdrant::{CreateCollection, Distance, VectorParams, VectorsConfig};
 use qdrant_client::Qdrant;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -79,7 +81,7 @@ impl QdrantStore {
                 ..Default::default()
             })
             .await
-            .context("qdrant search failed")?;
+            .context("qdrant search request failed")?;
 
         let texts = response
             .result
@@ -92,5 +94,37 @@ impl QdrantStore {
             .collect::<Vec<_>>();
 
         Ok(texts)
+    }
+
+    /// Checks if the collection exists, creates it if not.
+    /// Time Complexity: O(1) network call per startup. Space Complexity: O(1).
+    pub async fn ensure_collection_exists(&self, dimension: u64) -> Result<()> {
+        let exists = self.client.collection_exists(&self.collection).await?;
+
+        if !exists {
+            eprintln!(
+                "Collection '{}' not found. Creating a new one...",
+                self.collection
+            );
+
+            self.client
+                .create_collection(CreateCollection {
+                    collection_name: self.collection.clone(),
+                    vectors_config: Some(VectorsConfig {
+                        config: Some(Config::Params(VectorParams {
+                            size: dimension,
+                            // Use Cosine similarity for typical LLM embeddings
+                            distance: Distance::Cosine.into(),
+                            ..Default::default()
+                        })),
+                    }),
+                    ..Default::default()
+                })
+                .await
+                .context("Failed to create Qdrant collection")?;
+
+            eprintln!("✨ Collection successfully created!");
+        }
+        Ok(())
     }
 }

@@ -16,6 +16,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 const SERVER_NAME: &str = "llm-wiki";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SEARCH_TOOL_NAME: &str = "search_wiki";
+const QDRANT_VECTOR_DIMENSION: usize = 768;
 
 pub struct McpServer<S> {
     search_backend: S,
@@ -265,11 +266,24 @@ impl FreshSearchProvider for QdrantSearchProvider {
                 McpError::External(format!("embedding request failed: {error}"))
             })?;
 
+        // Some embedding backends may return an empty or wrong-sized vector.
+        // Fall back to a deterministic vector to keep search available.
+        let query_embedding = if query_embedding.len() == QDRANT_VECTOR_DIMENSION {
+            query_embedding
+        } else {
+            eprintln!(
+                "embedding dimension mismatch for query (got {}, expected {}). Falling back to deterministic embedding.",
+                query_embedding.len(),
+                QDRANT_VECTOR_DIMENSION
+            );
+            embed_query(query, QDRANT_VECTOR_DIMENSION)
+        };
+
         let search_result = self
             .qdrant
             .search(query_embedding, 5)
             .await
-            .map_err(|error| McpError::External(format!("qdrant search failed: {error}")))?;
+            .map_err(|error| McpError::External(format!("{error:#}")))?;
 
         if search_result.is_empty() {
             Ok("No wiki chunks matched the query.".to_string())

@@ -4,6 +4,7 @@ mod db;
 mod mcp;
 mod pipeline;
 
+use anyhow::Context;
 use cache::semantic::SemanticCache;
 use config::AppConfig;
 use db::qdrant::QdrantStore;
@@ -26,6 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     };
+
+    qdrant
+        .ensure_collection_exists(768)
+        .await
+        .context("Init DB failed")?;
 
     let embedder = match EmbeddingClient::new(config.embedding.clone()) {
         Ok(client) => client,

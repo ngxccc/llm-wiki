@@ -4,6 +4,7 @@ use crate::pipeline::embedder::EmbeddingClient;
 use anyhow::{Context, Result};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
@@ -14,6 +15,7 @@ const DEBOUNCE_WINDOW: Duration = Duration::from_secs(2);
 const READ_RETRY_DELAY: Duration = Duration::from_millis(150);
 const SIZE_STABILITY_DELAY: Duration = Duration::from_millis(100);
 const MAX_READ_RETRIES: usize = 5;
+const QDRANT_VECTOR_DIMENSION: usize = 768;
 
 pub async fn run_watcher(
     raw_dir: PathBuf,
@@ -22,6 +24,11 @@ pub async fn run_watcher(
     cancel_token: CancellationToken,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = mpsc::channel::<PathBuf>(1024);
+
+    eprintln!(
+        "watcher started: watching markdown under {}",
+        raw_dir.display()
+    );
 
     let mut watcher = RecommendedWatcher::new(
         {
@@ -45,6 +52,15 @@ pub async fn run_watcher(
     watcher
         .watch(Path::new(&raw_dir), RecursiveMode::Recursive)
         .context("failed to watch raw data path")?;
+
+    let initial_paths = collect_markdown_files(&raw_dir);
+    if !initial_paths.is_empty() {
+        eprintln!(
+            "watcher initial bootstrap: ingesting {} existing markdown file(s)",
+            initial_paths.len()
+        );
+        process_batch(&initial_paths, &embedder, &qdrant).await?;
+    }
 
     run_batch_consumer(&mut event_rx, embedder, qdrant, cancel_token).await
 }
@@ -80,6 +96,7 @@ async fn run_batch_consumer(
                     break;
                 };
 
+                eprintln!("watcher queued change: {}", path.display());
                 pending.insert(path);
                 timer.as_mut().reset(Instant::now() + DEBOUNCE_WINDOW);
             }
@@ -104,14 +121,53 @@ async fn process_batch(
     embedder: &EmbeddingClient,
     qdrant: &QdrantStore,
 ) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    eprintln!("watcher processing batch with {} file(s)", paths.len());
     let mut vectors = Vec::new();
 
     for path in paths {
-        let content = read_markdown_with_retry(path).await?;
+        let content = match read_markdown_with_retry(path).await {
+            Ok(content) => content,
+            Err(error) => {
+                eprintln!(
+                    "watcher skipped unreadable file {}: {error:#}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+
         let chunks = chunk_markdown(&content, 800, 120);
 
         for (index, chunk) in chunks.into_iter().enumerate() {
-            let embedding = embedder.embed_with_retry(&chunk, 3).await?;
+            let embedding = match embedder.embed_with_retry(&chunk, 3).await {
+                Ok(embedding) => embedding,
+                Err(error) => {
+                    eprintln!(
+                        "watcher skipped chunk due to embedding failure (file: {}, chunk: {}): {error:#}",
+                        path.display(),
+                        index
+                    );
+                    continue;
+                }
+            };
+
+            let embedding = if embedding.len() == QDRANT_VECTOR_DIMENSION {
+                embedding
+            } else {
+                eprintln!(
+                    "watcher embedding dimension mismatch (file: {}, chunk: {}, got {}, expected {}). Falling back to deterministic embedding.",
+                    path.display(),
+                    index,
+                    embedding.len(),
+                    QDRANT_VECTOR_DIMENSION
+                );
+                embed_chunk(&chunk, QDRANT_VECTOR_DIMENSION)
+            };
+
             vectors.push(ChunkVector {
                 source_path: path.display().to_string(),
                 chunk_index: index,
@@ -121,8 +177,75 @@ async fn process_batch(
         }
     }
 
+    if vectors.is_empty() {
+        eprintln!("watcher batch produced no vectors to upsert");
+        return Ok(());
+    }
+
     qdrant.bulk_upsert(&vectors).await?;
+    eprintln!("watcher upserted {} vector(s) to Qdrant", vectors.len());
     Ok(())
+}
+
+fn embed_chunk(text: &str, dimension: usize) -> Vec<f32> {
+    let mut vector = vec![0.0_f32; dimension];
+    for (index, byte) in text.bytes().enumerate() {
+        let bucket = index % dimension;
+        let signed = f32::from(byte) / 255.0;
+        vector[bucket] += signed;
+    }
+
+    let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for value in &mut vector {
+            *value /= norm;
+        }
+    }
+
+    vector
+}
+
+fn collect_markdown_files(root: &Path) -> Vec<PathBuf> {
+    let mut markdown_files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(current_dir) = stack.pop() {
+        let entries = match fs::read_dir(&current_dir) {
+            Ok(entries) => entries,
+            Err(error) => {
+                eprintln!(
+                    "warning: failed to list directory {}: {error}",
+                    current_dir.display()
+                );
+                continue;
+            }
+        };
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    eprintln!(
+                        "warning: failed to read dir entry under {}: {error}",
+                        current_dir.display()
+                    );
+                    continue;
+                }
+            };
+
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+
+            if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+                markdown_files.push(path);
+            }
+        }
+    }
+
+    markdown_files
 }
 
 async fn read_markdown_with_retry(path: &Path) -> Result<String> {
