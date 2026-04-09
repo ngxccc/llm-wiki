@@ -20,13 +20,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load_or_create("config.yaml");
     let cancel_token = CancellationToken::new();
 
-    let qdrant = match QdrantStore::new(&config.qdrant_url, config.qdrant_collection.clone()) {
+    let qdrant = match QdrantStore::new(
+        &config.qdrant_url,
+        config.qdrant_collection.clone(),
+        config.qdrant_api_key.clone(),
+    ) {
         Ok(store) => store,
         Err(error) => {
             eprintln!("failed to initialize qdrant client: {error}");
             return Ok(());
         }
     };
+
+    let vector_dim = config.embedding.dimensions.unwrap_or(1024); // Fallback
 
     qdrant
         .ensure_collection_exists(768)
@@ -52,6 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             watcher_embedder,
             watcher_qdrant,
             watcher_token,
+            vector_dim,
         )
         .await
         {
