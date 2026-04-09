@@ -1,6 +1,46 @@
-# LLM Wiki
+# LLM Wiki: The Event-Driven Local RAG & MCP Server
+
+[![Written in Rust](https://img.shields.io/badge/Written_in-Rust-orange.svg)](https://www.rust-lang.org/)
+[![Protocol](https://img.shields.io/badge/Protocol-MCP-blue.svg)](https://modelcontextprotocol.io/)
+[![Vector DB](https://img.shields.io/badge/Vector_DB-Qdrant-purple.svg)](https://qdrant.tech/)
 
 Local-first Personal Knowledge Management (PKM) system theo kiến trúc Event-Driven RAG, expose qua MCP (Model Context Protocol) trên `stdio` để IDE agent (Copilot/Cursor) gọi tool tìm kiếm.
+
+## Table of Contents
+
+- [LLM Wiki: The Event-Driven Local RAG \& MCP Server](#llm-wiki-the-event-driven-local-rag--mcp-server)
+  - [Table of Contents](#table-of-contents)
+  - [1. Mục tiêu dự án](#1-mục-tiêu-dự-án)
+  - [2. Tech Stack](#2-tech-stack)
+  - [3. Kiến trúc module](#3-kiến-trúc-module)
+  - [4. Prerequisites](#4-prerequisites)
+  - [5. Development bootstrap](#5-development-bootstrap)
+    - [5.1 Tool bắt buộc](#51-tool-bắt-buộc)
+    - [5.2 Tool theo use-case](#52-tool-theo-use-case)
+    - [5.3 Cài nhanh theo OS](#53-cài-nhanh-theo-os)
+    - [5.4 Verify môi trường](#54-verify-môi-trường)
+    - [5.5 Optional nhưng khuyến nghị](#55-optional-nhưng-khuyến-nghị)
+    - [5.6 VS Code MCP setup](#56-vs-code-mcp-setup)
+  - [6. Setup nhanh](#6-setup-nhanh)
+  - [7. Cấu hình `config.yaml`](#7-cấu-hình-configyaml)
+    - [7.1 Config reference (app)](#71-config-reference-app)
+    - [7.2 Config reference (Qdrant server)](#72-config-reference-qdrant-server)
+  - [8. Dùng thực tế để test MCP](#8-dùng-thực-tế-để-test-mcp)
+  - [9. Security và Integrity](#9-security-và-integrity)
+    - [9.1 Read-only data source](#91-read-only-data-source)
+    - [9.2 Pre-commit gate](#92-pre-commit-gate)
+  - [10. Ingestion Pipeline](#10-ingestion-pipeline)
+  - [11. MCP Server](#11-mcp-server)
+  - [12. Chạy dự án](#12-chạy-dự-án)
+  - [13. Build cross-platform](#13-build-cross-platform)
+    - [13.1 Build dựa trên môi trường development](#131-build-dựa-trên-môi-trường-development)
+    - [13.2 Build trên Linux/macOS](#132-build-trên-linuxmacos)
+  - [14. Development commands](#14-development-commands)
+  - [15. Troubleshooting](#15-troubleshooting)
+    - [`cargo: command not found` khi commit](#cargo-command-not-found-khi-commit)
+    - [`config.yaml` không tồn tại](#configyaml-không-tồn-tại)
+    - [Không search được từ Qdrant](#không-search-được-từ-qdrant)
+  - [16. Trạng thái hiện tại](#16-trạng-thái-hiện-tại)
 
 ## 1. Mục tiêu dự án
 
