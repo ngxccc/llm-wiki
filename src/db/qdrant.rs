@@ -25,7 +25,7 @@ impl QdrantStore {
         let mut builder = Qdrant::from_url(url);
 
         if let Some(key) = api_key {
-            builder = builder.api_key(key)
+            builder = builder.api_key(key);
         }
 
         let client = builder.build().context("failed to build qdrant client")?;
