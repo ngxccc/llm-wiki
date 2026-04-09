@@ -16,7 +16,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 const SERVER_NAME: &str = "llm-wiki";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SEARCH_TOOL_NAME: &str = "search_wiki";
-const QDRANT_VECTOR_DIMENSION: usize = 768;
 
 pub struct McpServer<S> {
     search_backend: S,
@@ -218,11 +217,16 @@ pub trait FreshSearchProvider {
 pub struct QdrantSearchProvider {
     qdrant: QdrantStore,
     embedder: EmbeddingClient,
+    vector_dimension: usize,
 }
 
 impl QdrantSearchProvider {
-    pub fn new(qdrant: QdrantStore, embedder: EmbeddingClient) -> Self {
-        Self { qdrant, embedder }
+    pub fn new(qdrant: QdrantStore, embedder: EmbeddingClient, vector_dimension: usize) -> Self {
+        Self {
+            qdrant,
+            embedder,
+            vector_dimension,
+        }
     }
 }
 
@@ -268,15 +272,15 @@ impl FreshSearchProvider for QdrantSearchProvider {
 
         // Some embedding backends may return an empty or wrong-sized vector.
         // Fall back to a deterministic vector to keep search available.
-        let query_embedding = if query_embedding.len() == QDRANT_VECTOR_DIMENSION {
+        let query_embedding = if query_embedding.len() == self.vector_dimension {
             query_embedding
         } else {
             eprintln!(
                 "embedding dimension mismatch for query (got {}, expected {}). Falling back to deterministic embedding.",
                 query_embedding.len(),
-                QDRANT_VECTOR_DIMENSION
+                self.vector_dimension
             );
-            embed_query(query, QDRANT_VECTOR_DIMENSION)
+            embed_query(query, self.vector_dimension)
         };
 
         let search_result = self
@@ -362,8 +366,8 @@ where
     Ok(())
 }
 
-fn embed_query(query: &str, dimensions: usize) -> Vec<f32> {
-    let mut vector = vec![0.0_f32; dimensions.max(1)];
+fn embed_query(query: &str, vector_dimension: usize) -> Vec<f32> {
+    let mut vector = vec![0.0_f32; vector_dimension.max(1)];
 
     for (index, byte) in query.bytes().enumerate() {
         let slot = index % vector.len();

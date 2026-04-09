@@ -33,7 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let vector_dim = config.embedding.dimensions.unwrap_or(1024); // Fallback
-    let vector_dim_u64 = u64::try_from(vector_dim).context("Embedding dimension conversion failed")?;
+    let vector_dim_u64 =
+        u64::try_from(vector_dim).context("Embedding dimension conversion failed")?;
 
     qdrant
         .ensure_collection_exists(vector_dim_u64)
@@ -67,11 +68,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let provider = QdrantSearchProvider::new(qdrant, embedder);
+    let provider = QdrantSearchProvider::new(qdrant, embedder, vector_dim);
     let mcp_token = cancel_token.clone();
 
     let mcp_server = task::spawn(async move {
-        let cache = SemanticCache::new(128, 64);
+        let cache = SemanticCache::new(128, vector_dim);
         let backend = CachedSearchBackend::new(cache, provider);
         let server = McpServer::new(backend);
         tokio::select! {
