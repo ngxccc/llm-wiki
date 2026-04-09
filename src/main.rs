@@ -33,9 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let vector_dim = config.embedding.dimensions.unwrap_or(1024); // Fallback
+    let vector_dim_u64 = u64::try_from(vector_dim).context("Embedding dimension conversion failed")?;
 
     qdrant
-        .ensure_collection_exists(768)
+        .ensure_collection_exists(vector_dim_u64)
         .await
         .context("Init DB failed")?;
 
