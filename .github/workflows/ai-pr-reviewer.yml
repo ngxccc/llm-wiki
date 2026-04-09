@@ -1,4 +1,4 @@
-name: "Senior AI Reviewer (Free Tier)"
+name: "Senior AI Reviewer (Pro Max)"
 
 on:
   pull_request:
@@ -16,28 +16,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate Diff and Send to Groq
+      - name: Generate Diff and Fetch Groq API
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          # 1. Trích xuất diff ra file text
+          # Lấy diff code
           git diff origin/main...HEAD > pr_diff.txt
 
-          # 2. Dùng Node.js chạy script "chống đạn"
+          # Chạy Node.js Fetch thuần túy (Không cần cài SDK)
           node -e "
             const fs = require('fs');
 
             async function review() {
               try {
-                // ĐỌC FILE TRỰC TIẾP TỪ Ổ CỨNG (An toàn tuyệt đối)
                 const diff = fs.readFileSync('pr_diff.txt', 'utf8');
-                if (diff.length < 10) return console.log('✅ Diff quá ngắn, không cần review.');
+                if (diff.length < 10) return console.log('✅ Diff không đáng kể, skip.');
 
-                console.log('🤖 Đang gửi code cho Groq...');
+                console.log('🤖 Đang gọi Groq API (Llama 3.3 70B)...');
 
+                // --- ĐOẠN UPDATE THEO CHUẨN GROQ DOCS ---
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                   method: 'POST',
                   headers: {
@@ -45,28 +45,37 @@ jobs:
                     'Content-Type': 'application/json'
                   },
                   body: JSON.stringify({
-                    model: 'llama-3.3-70b-versatile', // Cập nhật Model Llama mới nhất của Groq
-                    messages: [{
-                      role: 'system',
-                      content: 'You are a strict Senior Node.js Developer. Review this git diff. Point out bugs or bad practices. Be concise.'
-                    }, {
-                      role: 'user',
-                      content: diff
-                    }]
+                    model: 'llama-3.3-70b-versatile',
+                    messages: [
+                      {
+                        role: 'system',
+                        content: 'You are a strict Senior Rust Developer. Review this git diff. Focus on security, Big O performance, and maintainability. Keep it concise.'
+                      },
+                      {
+                        role: 'user',
+                        content: diff
+                      }
+                    ],
+                    temperature: 0.1, // Ép bot trả lời deterministic (không ảo giác)
+                    max_completion_tokens: 1024, // Dùng param mới nhất thay cho max_tokens
+                    top_p: 1 // Nucleus sampling default
                   })
                 });
 
                 const data = await response.json();
 
-                // KIỂM TRA LỖI TỪ API GROQ TRƯỚC KHI ĐỌC DATA 🚨
+                // Bắt lỗi chuẩn theo format Document của Groq: data.error.message
                 if (!response.ok) {
-                  console.error('❌ Groq API Error:', JSON.stringify(data, null, 2));
-                  process.exit(1); // Ép CI/CD báo đỏ (Failed)
+                  const errorMsg = data.error?.message || 'Lỗi không xác định từ server';
+                  const errorCode = data.error?.code || 'N/A';
+                  console.error(\`❌ Groq API Error [\${errorCode}]: \${errorMsg}\`);
+                  process.exit(1);
                 }
 
                 const reviewText = data.choices[0].message.content;
+                // ------------------------------------------
 
-                console.log('🤖 Đang comment kết quả lên GitHub PR...');
+                console.log('🤖 Đang post comment lên PR...');
 
                 const ghResponse = await fetch(\`https://api.github.com/repos/\${process.env.REPO}/issues/\${process.env.PR_NUMBER}/comments\`, {
                   method: 'POST',
@@ -74,19 +83,15 @@ jobs:
                     'Authorization': \`Bearer \${process.env.GH_TOKEN}\`,
                     'Content-Type': 'application/json'
                   },
-                  body: JSON.stringify({ body: '### 🤖 AI Code Review:\\n' + reviewText })
+                  body: JSON.stringify({ body: '### 🤖 Review từ Llama-3.3-70b:\\n\\n' + reviewText })
                 });
 
-                if (!ghResponse.ok) {
-                   const ghError = await ghResponse.json();
-                   console.error('❌ GitHub API Error:', JSON.stringify(ghError, null, 2));
-                   process.exit(1);
-                }
+                if (!ghResponse.ok) throw new Error('Lỗi khi comment lên GitHub');
 
-                console.log('✅ Review hoàn tất!');
+                console.log('✅ Xong! Check PR ngay và luôn!');
 
               } catch (error) {
-                console.error('❌ Script Crash:', error.message);
+                console.error('❌ System Crash:', error.message);
                 process.exit(1);
               }
             }
