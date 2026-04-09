@@ -25,21 +25,22 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          # Lấy diff code
+          # Extract the raw code diff
           git diff origin/main...HEAD > pr_diff.txt
 
-          # Chạy Node.js Fetch thuần túy (Không cần cài SDK)
+          # Run raw Node.js Fetch (Zero-dependency approach)
           node -e "
             const fs = require('fs');
 
             async function review() {
               try {
                 const diff = fs.readFileSync('pr_diff.txt', 'utf8');
-                if (diff.length < 10) return console.log('✅ Diff không đáng kể, skip.');
+                // Check if diff is too small to review
+                if (diff.length < 10) return console.log('✅ Diff is insignificant, skipping.');
 
-                console.log('🤖 Đang gọi Groq API (Llama 3.3 70B)...');
+                console.log('🤖 Calling Groq API (Llama 3.3 70B)...');
 
-                // --- ĐOẠN UPDATE THEO CHUẨN GROQ DOCS ---
+                // --- GROQ API CALL ---
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                   method: 'POST',
                   headers: {
@@ -58,17 +59,17 @@ jobs:
                         content: diff
                       }
                     ],
-                    temperature: 0.1, // Ép bot trả lời deterministic (không ảo giác)
-                    max_completion_tokens: 1024, // Dùng param mới nhất thay cho max_tokens
-                    top_p: 1 // Nucleus sampling default
+                    temperature: 0.1, // Deterministic output to avoid hallucinations
+                    max_completion_tokens: 1024,
+                    top_p: 1
                   })
                 });
 
                 const data = await response.json();
 
-                // Bắt lỗi chuẩn theo format Document của Groq: data.error.message
+                // Handle standard Groq API errors
                 if (!response.ok) {
-                  const errorMsg = data.error?.message || 'Lỗi không xác định từ server';
+                  const errorMsg = data.error?.message || 'Unknown server error';
                   const errorCode = data.error?.code || 'N/A';
                   console.error(\`❌ Groq API Error [\${errorCode}]: \${errorMsg}\`);
                   process.exit(1);
@@ -77,25 +78,28 @@ jobs:
                 const reviewText = data.choices[0].message.content;
                 // ------------------------------------------
 
-                console.log('🤖 Đang post comment lên PR...');
+                console.log('🤖 Posting comment to PR...');
 
+                // Push the review back to GitHub PR
                 const ghResponse = await fetch(\`https://api.github.com/repos/\${process.env.REPO}/issues/\${process.env.PR_NUMBER}/comments\`, {
                   method: 'POST',
                   headers: {
                     'Authorization': \`Bearer \${process.env.GH_TOKEN}\`,
                     'Content-Type': 'application/json'
                   },
-                  body: JSON.stringify({ body: '### 🤖 Review từ Llama-3.3-70b:\\n\\n' + reviewText })
+                  body: JSON.stringify({ body: '### 🤖 Review from Llama-3.3-70b:\n\n' + reviewText })
                 });
 
-                if (!ghResponse.ok) throw new Error('Lỗi khi comment lên GitHub');
+                if (!ghResponse.ok) throw new Error('Failed to post comment on GitHub PR');
 
-                console.log('✅ Xong! Check PR ngay và luôn!');
+                console.log('✅ Done! Check the PR ASAP!');
 
               } catch (error) {
                 console.error('❌ System Crash:', error.message);
                 process.exit(1);
               }
             }
+
+            // Execute the async function
             review();
           "
