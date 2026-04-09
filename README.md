@@ -40,7 +40,6 @@ Local-first Personal Knowledge Management (PKM) system theo kiến trúc Event-D
     - [`cargo: command not found` khi commit](#cargo-command-not-found-khi-commit)
     - [`config.yaml` không tồn tại](#configyaml-không-tồn-tại)
     - [Không search được từ Qdrant](#không-search-được-từ-qdrant)
-  - [16. Trạng thái hiện tại](#16-trạng-thái-hiện-tại)
 
 ## 1. Mục tiêu dự án
 
@@ -434,13 +433,3 @@ cargo test
 
 - Kiểm tra `qdrant_url`, collection name, network connectivity
 - Kiểm tra embedding endpoint trả đúng JSON có field `embedding: [f32, ...]`
-
-## 16. Trạng thái hiện tại
-
-- ✅ Rust edition 2024
-- ✅ Dynamic vector dimensions (từ config thay vì hardcoded)
-- ✅ Qdrant API key support cho authenticated endpoints
-- ✅ Khung đầy đủ watcher + MCP + cache + qdrant integration
-- ✅ Security bootstrap script và pre-commit gate
-- ✅ `.gitattributes` để đồng nhất line endings (LF)
-- Sẵn sàng để mở rộng thêm: schema migration cho Qdrant collection, metrics, observability, integration tests end-to-end
