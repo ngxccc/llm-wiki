@@ -15,13 +15,13 @@ const DEBOUNCE_WINDOW: Duration = Duration::from_secs(2);
 const READ_RETRY_DELAY: Duration = Duration::from_millis(150);
 const SIZE_STABILITY_DELAY: Duration = Duration::from_millis(100);
 const MAX_READ_RETRIES: usize = 5;
-const QDRANT_VECTOR_DIMENSION: usize = 768;
 
 pub async fn run_watcher(
     raw_dir: PathBuf,
     embedder: EmbeddingClient,
     qdrant: QdrantStore,
     cancel_token: CancellationToken,
+    vector_dimension: usize,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = mpsc::channel::<PathBuf>(1024);
 
@@ -59,10 +59,17 @@ pub async fn run_watcher(
             "watcher initial bootstrap: ingesting {} existing markdown file(s)",
             initial_paths.len()
         );
-        process_batch(&initial_paths, &embedder, &qdrant).await?;
+        process_batch(&initial_paths, &embedder, &qdrant, vector_dimension).await?;
     }
 
-    run_batch_consumer(&mut event_rx, embedder, qdrant, cancel_token).await
+    run_batch_consumer(
+        &mut event_rx,
+        embedder,
+        qdrant,
+        cancel_token,
+        vector_dimension,
+    )
+    .await
 }
 
 /// Event micro-batching consumer.
@@ -74,6 +81,7 @@ async fn run_batch_consumer(
     embedder: EmbeddingClient,
     qdrant: QdrantStore,
     cancel_token: CancellationToken,
+    vector_dimension: usize,
 ) -> Result<()> {
     let mut pending = HashSet::<PathBuf>::new();
     let timer = tokio::time::sleep(Duration::from_secs(24 * 60 * 60));
@@ -86,7 +94,7 @@ async fn run_batch_consumer(
                 if !pending.is_empty() {
                     let batch = pending.drain().collect::<Vec<_>>();
                     eprintln!("Flushing {} pending file(s) before shutdown.", batch.len());
-                    process_batch(&batch, &embedder, &qdrant).await?;
+                    process_batch(&batch, &embedder, &qdrant, vector_dimension).await?;
                 }
                 eprintln!("Watcher shutdown completed.");
                 break;
@@ -102,7 +110,7 @@ async fn run_batch_consumer(
             }
             () = &mut timer, if !pending.is_empty() => {
                 let batch = pending.drain().collect::<Vec<_>>();
-                process_batch(&batch, &embedder, &qdrant).await?;
+                process_batch(&batch, &embedder, &qdrant, vector_dimension).await?;
                 timer.as_mut().reset(Instant::now() + Duration::from_secs(24 * 60 * 60));
             }
         }
@@ -110,7 +118,7 @@ async fn run_batch_consumer(
 
     if !pending.is_empty() {
         let batch = pending.drain().collect::<Vec<_>>();
-        process_batch(&batch, &embedder, &qdrant).await?;
+        process_batch(&batch, &embedder, &qdrant, vector_dimension).await?;
     }
 
     Ok(())
@@ -120,6 +128,7 @@ async fn process_batch(
     paths: &[PathBuf],
     embedder: &EmbeddingClient,
     qdrant: &QdrantStore,
+    vector_dimension: usize,
 ) -> Result<()> {
     if paths.is_empty() {
         return Ok(());
@@ -164,7 +173,7 @@ async fn process_batch(
         }
 
         for (index, (chunk, embedding)) in chunks.into_iter().zip(embeddings).enumerate() {
-            let embedding = if embedding.len() == QDRANT_VECTOR_DIMENSION {
+            let embedding = if embedding.len() == vector_dimension {
                 embedding
             } else {
                 eprintln!(
@@ -172,9 +181,9 @@ async fn process_batch(
                     path.display(),
                     index,
                     embedding.len(),
-                    QDRANT_VECTOR_DIMENSION
+                    vector_dimension
                 );
-                embed_chunk(&chunk, QDRANT_VECTOR_DIMENSION)
+                embed_chunk(&chunk, vector_dimension)
             };
 
             vectors.push(ChunkVector {

@@ -5,10 +5,10 @@ qdrant_collection: llm_wiki_chunks
 embedding:
   base_url: http://127.0.0.1:4000
   endpoint: /v1/embeddings
-  model: nomic-embed-text
+  model: bge-m3
   timeout_secs: 30
   # Optional when gateway requires auth
   # api_key: sk-xxx
   encoding_format: float
-  dimensions: 768
-  max_batch_size: 16
+  dimensions: 1024
+  max_batch_size: 8

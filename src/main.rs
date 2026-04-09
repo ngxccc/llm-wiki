@@ -20,7 +20,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load_or_create("config.yaml");
     let cancel_token = CancellationToken::new();
 
-    let qdrant = match QdrantStore::new(&config.qdrant_url, config.qdrant_collection.clone()) {
+    let qdrant = match QdrantStore::new(
+        &config.qdrant_url,
+        config.qdrant_collection.clone(),
+        config.qdrant_api_key.clone(),
+    ) {
         Ok(store) => store,
         Err(error) => {
             eprintln!("failed to initialize qdrant client: {error}");
@@ -28,8 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let vector_dim = config.embedding.dimensions.unwrap_or(1024); // Fallback
+    let vector_dim_u64 =
+        u64::try_from(vector_dim).context("Embedding dimension conversion failed")?;
+
     qdrant
-        .ensure_collection_exists(768)
+        .ensure_collection_exists(vector_dim_u64)
         .await
         .context("Init DB failed")?;
 
@@ -52,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             watcher_embedder,
             watcher_qdrant,
             watcher_token,
+            vector_dim,
         )
         .await
         {
@@ -59,11 +68,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let provider = QdrantSearchProvider::new(qdrant, embedder);
+    let provider = QdrantSearchProvider::new(qdrant, embedder, vector_dim);
     let mcp_token = cancel_token.clone();
 
     let mcp_server = task::spawn(async move {
-        let cache = SemanticCache::new(128, 64);
+        let cache = SemanticCache::new(128, vector_dim);
         let backend = CachedSearchBackend::new(cache, provider);
         let server = McpServer::new(backend);
         tokio::select! {

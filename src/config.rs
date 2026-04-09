@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub raw_data_path: PathBuf,
     #[serde(default = "default_qdrant_url")]
     pub qdrant_url: String,
+    #[serde(default)]
+    pub qdrant_api_key: Option<String>,
     #[serde(default = "default_qdrant_collection")]
     pub qdrant_collection: String,
     #[serde(default)]
@@ -40,6 +42,7 @@ impl Default for AppConfig {
         Self {
             raw_data_path: default_raw_data_path(),
             qdrant_url: default_qdrant_url(),
+            qdrant_api_key: None,
             qdrant_collection: default_qdrant_collection(),
             embedding: EmbeddingConfig::default(),
         }
