@@ -21,10 +21,14 @@ pub struct QdrantStore {
 }
 
 impl QdrantStore {
-    pub fn new(url: &str, collection: String) -> Result<Self> {
-        let client = Qdrant::from_url(url)
-            .build()
-            .context("failed to build qdrant client")?;
+    pub fn new(url: &str, collection: String, api_key: Option<String>) -> Result<Self> {
+        let mut builder = Qdrant::from_url(url);
+
+        if let Some(key) = api_key {
+            builder = builder.api_key(key)
+        }
+
+        let client = builder.build().context("failed to build qdrant client")?;
         Ok(Self { client, collection })
     }
 
