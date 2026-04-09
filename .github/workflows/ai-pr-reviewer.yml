@@ -1,6 +1,5 @@
 name: "Senior AI Reviewer (Free Tier)"
 
-# Trigger action when a Pull Request is opened or updated
 on:
   pull_request:
     types: [opened, synchronize]
@@ -8,69 +7,88 @@ on:
 jobs:
   review-code:
     runs-on: ubuntu-latest
-    # Need write permission to post comments on the PR
     permissions:
       pull-requests: write
-
-    environment: production
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # Fetch history to get the diff
+          fetch-depth: 0
 
       - name: Generate Diff and Send to Groq
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Provided automatically by GitHub
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          # 1. Get the code diff of the current PR
+          # 1. Trích xuất diff ra file text
           git diff origin/main...HEAD > pr_diff.txt
 
-          # Read diff into a variable (escape quotes for JSON)
-          DIFF=$(cat pr_diff.txt | jq -R -s '.')
-
-          # 2. Call Groq API using Llama 3 70B
-          # Note: Using Node.js directly in the workflow for simplicity
+          # 2. Dùng Node.js chạy script "chống đạn"
           node -e "
+            const fs = require('fs');
+
             async function review() {
-              const diff = $DIFF;
-              if (diff.length < 10) return console.log('Empty diff, skip.');
+              try {
+                // ĐỌC FILE TRỰC TIẾP TỪ Ổ CỨNG (An toàn tuyệt đối)
+                const diff = fs.readFileSync('pr_diff.txt', 'utf8');
+                if (diff.length < 10) return console.log('✅ Diff quá ngắn, không cần review.');
 
-              console.log('🤖 Sending code to Groq Llama3...');
-              const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                  'Authorization': \`Bearer process.env.GROQ_API_KEY\`,
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                  model: 'llama3-70b-8192',
-                  messages: [{
-                    role: 'system',
-                    content: 'You are a strict Senior Node.js/TypeScript Developer. Review the following git diff. Point out bugs, BigO performance issues, or bad practices. Be concise.'
-                  }, {
-                    role: 'user',
-                    content: diff
-                  }]
-                })
-              });
+                console.log('🤖 Đang gửi code cho Groq...');
 
-              const data = await response.json();
-              const reviewText = data.choices[0].message.content;
+                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': \`Bearer \${process.env.GROQ_API_KEY}\`,
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                    model: 'llama-3.3-70b-versatile', // Cập nhật Model Llama mới nhất của Groq
+                    messages: [{
+                      role: 'system',
+                      content: 'You are a strict Senior Node.js Developer. Review this git diff. Point out bugs or bad practices. Be concise.'
+                    }, {
+                      role: 'user',
+                      content: diff
+                    }]
+                  })
+                });
 
-              // 3. Post the result back to GitHub PR as a comment
-              await fetch(\`https://api.github.com/repos/\${process.env.REPO}/issues/\${process.env.PR_NUMBER}/comments\`, {
-                method: 'POST',
-                headers: {
-                  'Authorization': \`Bearer process.env.GH_TOKEN\`,
-                  'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ body: '### 🤖 AI Code Review:\\n' + reviewText })
-              });
+                const data = await response.json();
+
+                // KIỂM TRA LỖI TỪ API GROQ TRƯỚC KHI ĐỌC DATA 🚨
+                if (!response.ok) {
+                  console.error('❌ Groq API Error:', JSON.stringify(data, null, 2));
+                  process.exit(1); // Ép CI/CD báo đỏ (Failed)
+                }
+
+                const reviewText = data.choices[0].message.content;
+
+                console.log('🤖 Đang comment kết quả lên GitHub PR...');
+
+                const ghResponse = await fetch(\`https://api.github.com/repos/\${process.env.REPO}/issues/\${process.env.PR_NUMBER}/comments\`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': \`Bearer \${process.env.GH_TOKEN}\`,
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({ body: '### 🤖 AI Code Review:\\n' + reviewText })
+                });
+
+                if (!ghResponse.ok) {
+                   const ghError = await ghResponse.json();
+                   console.error('❌ GitHub API Error:', JSON.stringify(ghError, null, 2));
+                   process.exit(1);
+                }
+
+                console.log('✅ Review hoàn tất!');
+
+              } catch (error) {
+                console.error('❌ Script Crash:', error.message);
+                process.exit(1);
+              }
             }
             review();
           "
