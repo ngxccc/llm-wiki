@@ -217,9 +217,14 @@ embedding:
 
 - `embedding.dimensions`
   - Mục đích: yêu cầu giảm chiều vector (chỉ có hiệu lực khi model/gateway hỗ trợ).
+  - Default: `1024` (fallback nếu không set)
+  - Ghi chú: giá trị này được truyền động vào watcher thay vì hardcoded.
 
 - `embedding.max_batch_size`
   - Mục đích: giới hạn số chunk mỗi request để tránh payload quá lớn.
+
+- `qdrant_api_key` (optional)
+  - Mục đích: Bearer token để authenticate với Qdrant nếu server yêu cầu.
 
 ### 7.2 Config reference (Qdrant server)
 
@@ -392,6 +397,10 @@ cargo test
 
 ## 16. Trạng thái hiện tại
 
-- Đã có khung đầy đủ watcher + MCP + cache + qdrant integration
-- Đã có security bootstrap script và pre-commit gate
+- ✅ Rust edition 2024
+- ✅ Dynamic vector dimensions (từ config thay vì hardcoded)
+- ✅ Qdrant API key support cho authenticated endpoints
+- ✅ Khung đầy đủ watcher + MCP + cache + qdrant integration
+- ✅ Security bootstrap script và pre-commit gate
+- ✅ `.gitattributes` để đồng nhất line endings (LF)
 - Sẵn sàng để mở rộng thêm: schema migration cho Qdrant collection, metrics, observability, integration tests end-to-end
