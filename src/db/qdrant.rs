@@ -22,13 +22,22 @@ pub struct QdrantStore {
 
 impl QdrantStore {
     pub fn new(url: &str, collection: String, api_key: Option<String>) -> Result<Self> {
-        let mut builder = Qdrant::from_url(url);
+        let final_url = if !url.contains(':') && url.contains("qdrant.io") {
+            format!("{url}:6334")
+        } else {
+            url.to_string()
+        };
+
+        let mut builder = Qdrant::from_url(&final_url);
+        builder = builder.skip_compatibility_check();
 
         if let Some(key) = api_key {
             builder = builder.api_key(key);
         }
 
-        let client = builder.build().context("failed to build qdrant client")?;
+        let client = builder
+            .build()
+            .context("failed to build qdrant client - check your URL and API Key")?;
         Ok(Self { client, collection })
     }
 

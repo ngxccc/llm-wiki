@@ -20,26 +20,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load_or_create("config.yaml");
     let cancel_token = CancellationToken::new();
 
-    let qdrant = match QdrantStore::new(
-        &config.qdrant_url,
-        config.qdrant_collection.clone(),
-        config.qdrant_api_key.clone(),
-    ) {
-        Ok(store) => store,
-        Err(error) => {
-            eprintln!("failed to initialize qdrant client: {error}");
-            return Ok(());
-        }
-    };
-
     let vector_dim = config.embedding.dimensions.unwrap_or(1024); // Fallback
     let vector_dim_u64 =
         u64::try_from(vector_dim).context("Embedding dimension conversion failed")?;
 
-    qdrant
-        .ensure_collection_exists(vector_dim_u64)
-        .await
-        .context("Init DB failed")?;
+    let qdrant = init_qdrant_with_retry(&config, vector_dim_u64).await;
 
     let embedder = match EmbeddingClient::new(config.embedding.clone()) {
         Ok(client) => client,
@@ -133,4 +118,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+async fn init_qdrant_with_retry(config: &AppConfig, dimension: u64) -> QdrantStore {
+    let mut retry_delay = Duration::from_secs(2);
+    let max_delay = Duration::from_secs(30);
+
+    eprintln!(
+        "🚀 Initializing Qdrant connection (Target: {})...",
+        config.qdrant_url
+    );
+
+    loop {
+        match QdrantStore::new(
+            &config.qdrant_url,
+            config.qdrant_collection.clone(),
+            config.qdrant_api_key.clone(),
+        ) {
+            Ok(store) => {
+                // Kiểm tra xem Collection đã sẵn sàng chưa
+                match store.ensure_collection_exists(dimension).await {
+                    Ok(()) => {
+                        eprintln!("✅ Connected to Qdrant successfully.");
+                        return store;
+                    }
+                    Err(e) => eprintln!("⚠️ Qdrant collection check failed: {e}. Retrying..."),
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠️ Qdrant client creation failed: {e}. Retrying in {retry_delay:?}...");
+            }
+        }
+
+        tokio::time::sleep(retry_delay).await;
+        // Exponential backoff: 2, 4, 8, 16, 30...
+        retry_delay = std::cmp::min(retry_delay * 2, max_delay);
+    }
 }
