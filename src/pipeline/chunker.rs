@@ -362,4 +362,36 @@ Another paragraph.
         let chunks = ultimate_markdown_chunker("Hello world", 1);
         assert!(!chunks.is_empty());
     }
+
+    #[test]
+    fn test_stress_performance_and_utf8_10mb() {
+        use std::time::Instant;
+
+        // Chuỗi mẫu: Chữ Hán, Ả Rập, tiếng Việt, Emoji (đa dạng Byte Size)
+        let sample_pattern = "你好! Rust siêu tốc 🚀 مرحبا thế giới. \n";
+
+        // Lặp lại để tạo file ảo 10MB
+        // 1 string này khoảng 50 bytes. Lặp 200,000 lần = 10,000,000 bytes (10MB)
+        let giant_markdown = sample_pattern.repeat(200_000);
+
+        println!("Nạp xong file 10MB vào RAM. Bắt đầu ép xung...");
+
+        let start_time = Instant::now();
+        // Ép chunk nhỏ (500 bytes) để các hàm Fallback/Regex phải làm việc liên tục
+        let chunks = ultimate_markdown_chunker(&giant_markdown, 500);
+        let duration = start_time.elapsed();
+
+        println!(
+            "⏱️ Cắt 10MB thành {} chunks trong {:?}",
+            chunks.len(),
+            duration
+        );
+
+        // Đảm bảo không bị Panic vì cắt trúng giữa ký tự UTF-8
+        assert!(!chunks.is_empty());
+
+        // Assert tốc độ: Ở chế độ release, 10MB mất khoảng 0.05 giây.
+        // Đặt mốc 2 giây làm chuẩn phòng hờ máy yếu hoặc chạy ở chế độ Debug CI.
+        assert!(duration.as_secs_f64() < 2.0, "Thuật toán chạy quá chậm!");
+    }
 }
