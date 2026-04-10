@@ -49,6 +49,8 @@ impl QdrantStore {
             return Ok(());
         }
 
+        let namespace = Uuid::NAMESPACE_OID;
+
         let mut points = Vec::with_capacity(vectors.len());
         for vector in vectors {
             let chunk_index =
@@ -62,8 +64,11 @@ impl QdrantStore {
             payload.insert("chunk_index".to_string(), Value::from(chunk_index));
             payload.insert("text".to_string(), Value::from(vector.text.clone()));
 
+            let unique_identity = format!("{}#{}", vector.source_path, vector.chunk_index);
+            let point_id = Uuid::new_v5(&namespace, unique_identity.as_bytes()).to_string();
+
             points.push(PointStruct::new(
-                Uuid::new_v4().to_string(),
+                point_id,
                 vector.embedding.clone(),
                 payload,
             ));
