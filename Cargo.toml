@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+regex = "1.10"
+pulldown-cmark = "0.13.3"
 async-trait = "0.1"
 anyhow = "1"
 base64 = "0.22"
