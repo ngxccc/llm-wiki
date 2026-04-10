@@ -171,18 +171,18 @@ async fn process_batch(
         let current_hash = match SyncState::compute_hash_stream(path).await {
             Ok(h) => h,
             Err(e) => {
-                eprintln!("⚠️ Lỗi khi băm file {}: {e}", path.display());
+                eprintln!("⚠️ Error while hash the file {}: {e}", path.display());
                 continue 'file_loop;
             }
         };
 
         if !sync_state.is_modified(path, &current_hash) {
-            eprintln!("⏭️ File {} không đổi. Skip Embedding!", path.display());
+            eprintln!("⏭️ File {} not changed. Skip Embedding!", path.display());
             continue 'file_loop;
         }
 
         eprintln!(
-            "🔄 File {} mới hoặc đã bị sửa. Đang tiến hành nhai...",
+            "🔄 {} is new file or has been changed. Hashing...",
             path.display()
         );
 
@@ -198,7 +198,7 @@ async fn process_batch(
         let link_re = ref_link_regex();
 
         while let Ok(Some(line)) = lines.next_line().await {
-            // Nếu dòng này là khai báo link, cất nó vào "túi khôn"
+            // If line is a reference link declaration, collect it into the global context
             if link_re.is_match(&line) {
                 global_links.push_str(&line);
                 global_links.push('\n');
@@ -207,12 +207,12 @@ async fn process_batch(
 
         // AST PARSING & CHUNKING
         eprintln!("Pass 2: Chunking & Embedding 5MB streams...");
-        // Tua ngược con trỏ file về lại vị trí byte 0 (Vạch xuất phát)
+        // Rewind file pointer to the beginning
         file.rewind()
             .await
             .with_context(|| format!("failed to rewind file {}", path.display()))?;
 
-        // Reset lại reader cho file vừa tua
+        // Reset reader for the rewound file
         let reader = BufReader::new(&mut file);
         let mut lines = reader.lines();
 
@@ -230,8 +230,8 @@ async fn process_batch(
             string_buffer.push('\n');
 
             if string_buffer.len() >= RAM_BUFFER_LIMIT && !in_code_block {
-                // 💉 INJECTION MAGIC: Nhồi đống Link gom được ở Pass 1 vào đầu Buffer 5MB!
-                // Nhờ vậy, AST sẽ tự động resolve được [my_link] dù nó nằm ở cuối file.
+                // Inject the global links gathered in Pass 1 into the start of each 5MB buffer.
+                // This allows the AST parser to resolve reference links (e.g., [my_link]) even if they appear later in the file.
                 let chunk_payload = format!("{global_links}\n\n{string_buffer}");
 
                 global_chunk_index = process_and_flush_buffer(
@@ -249,7 +249,7 @@ async fn process_batch(
             }
         }
 
-        // Xử lý nốt phần đuôi file
+        // Handle the remaining part of the file
         if !string_buffer.trim().is_empty() {
             let chunk_payload = format!("{global_links}\n\n{string_buffer}");
             process_and_flush_buffer(
@@ -268,7 +268,7 @@ async fn process_batch(
             let final_mtime = final_meta.modified().unwrap_or(initial_mtime);
             let final_size = final_meta.len();
 
-            // Nếu file bị user sửa đổi (hoặc size đổi) trong lúc ta đang chạy 2 Pass
+            // TOCTOU Check: If the file was modified by the user during the 2-Pass process
             if final_mtime != initial_mtime || final_size != initial_size {
                 eprintln!(
                     "🚨 TOCTOU Detected! File {} was modified during processing.",
@@ -276,7 +276,7 @@ async fn process_batch(
                 );
                 eprintln!("🗑️ Aborting current state. The Watcher will re-process the new event automatically.");
 
-                // Trả về lỗi để thoát lô xử lý này. Watcher sẽ tự kích hoạt lại lô mới!
+                // Skip updating sync state. The watcher will pick up the new change event.
                 continue 'file_loop;
             }
         }
@@ -301,7 +301,7 @@ async fn process_and_flush_buffer(
     vectors: &mut Vec<ChunkVector>,
     mut chunk_index: usize,
 ) -> Result<usize> {
-    // 1. Quăng 5MB text vào Chunker xịn xò của mình
+    // 1. Pass the 5MB text buffer to the custom Markdown chunker
     let chunks = ultimate_markdown_chunker(text_buffer, 800);
     if chunks.is_empty() {
         return Ok(chunk_index);
@@ -310,7 +310,7 @@ async fn process_and_flush_buffer(
     let chunk_refs = chunks.iter().map(String::as_str).collect::<Vec<_>>();
     let mut embeddings = Vec::with_capacity(chunk_refs.len());
 
-    // 2. Gọi API Embeddings (Đã chia lô batch bên trong)
+    // 2. Call Embedding API (Internal batching handled by the client)
     for chunk_batch in chunk_refs.chunks(embedder.max_batch_size()) {
         let mut batch_embeddings = embedder
             .embed_batch_with_retry(chunk_batch, 3)
@@ -320,7 +320,7 @@ async fn process_and_flush_buffer(
         embeddings.append(&mut batch_embeddings);
     }
 
-    // 3. Đóng gói thành Vector Point
+    // 3. Package into Vector Points
     for (chunk, embedding) in chunks.into_iter().zip(embeddings) {
         let final_embedding = if embedding.len() == vector_dimension {
             embedding
@@ -337,14 +337,14 @@ async fn process_and_flush_buffer(
         chunk_index += 1;
     }
 
-    // 4. Bơm mẹ nó lên Qdrant luôn cho nóng (Giữ mảng vectors nhỏ)
+    // 4. Immediate Upsert to Qdrant to keep the vectors array footprint small
     if !vectors.is_empty() {
         qdrant.bulk_upsert(vectors).await?;
         eprintln!("Stream flushed {} vectors to Qdrant...", vectors.len());
-        vectors.clear(); // XẢ RAM TẦNG 2!
+        vectors.clear();
     }
 
-    Ok(chunk_index) // Trả về index để đếm tiếp cho mẻ sau
+    Ok(chunk_index) // Return index for the next iteration
 }
 
 async fn wait_for_stable_file(path: &Path) -> Result<()> {
