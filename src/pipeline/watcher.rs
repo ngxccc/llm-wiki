@@ -1,3 +1,4 @@
+use crate::cache::sync_state::SyncState;
 use crate::db::qdrant::{ChunkVector, QdrantStore};
 use crate::pipeline::chunker::ultimate_markdown_chunker;
 use crate::pipeline::embedder::EmbeddingClient;
@@ -34,6 +35,8 @@ pub async fn run_watcher(
         raw_dir.display()
     );
 
+    let mut sync_state = SyncState::load();
+
     let mut watcher = RecommendedWatcher::new(
         {
             let event_tx = event_tx.clone();
@@ -63,7 +66,14 @@ pub async fn run_watcher(
             "watcher initial bootstrap: ingesting {} existing markdown file(s)",
             initial_paths.len()
         );
-        process_batch(&initial_paths, &embedder, &qdrant, vector_dimension).await?;
+        process_batch(
+            &initial_paths,
+            &embedder,
+            &qdrant,
+            vector_dimension,
+            &mut sync_state,
+        )
+        .await?;
     }
 
     run_batch_consumer(
@@ -72,6 +82,7 @@ pub async fn run_watcher(
         qdrant,
         cancel_token,
         vector_dimension,
+        &mut sync_state,
     )
     .await
 }
@@ -86,6 +97,7 @@ async fn run_batch_consumer(
     qdrant: QdrantStore,
     cancel_token: CancellationToken,
     vector_dimension: usize,
+    sync_state: &mut SyncState,
 ) -> Result<()> {
     let mut pending = HashSet::<PathBuf>::new();
     let timer = tokio::time::sleep(Duration::from_secs(24 * 60 * 60));
@@ -98,7 +110,7 @@ async fn run_batch_consumer(
                 if !pending.is_empty() {
                     let batch = pending.drain().collect::<Vec<_>>();
                     eprintln!("Flushing {} pending file(s) before shutdown.", batch.len());
-                    process_batch(&batch, &embedder, &qdrant, vector_dimension).await?;
+                    process_batch(&batch, &embedder, &qdrant, vector_dimension, sync_state).await?;
                 }
                 eprintln!("Watcher shutdown completed.");
                 break;
@@ -114,7 +126,7 @@ async fn run_batch_consumer(
             }
             () = &mut timer, if !pending.is_empty() => {
                 let batch = pending.drain().collect::<Vec<_>>();
-                process_batch(&batch, &embedder, &qdrant, vector_dimension).await?;
+                process_batch(&batch, &embedder, &qdrant, vector_dimension, sync_state).await?;
                 timer.as_mut().reset(Instant::now() + Duration::from_secs(24 * 60 * 60));
             }
         }
@@ -122,17 +134,19 @@ async fn run_batch_consumer(
 
     if !pending.is_empty() {
         let batch = pending.drain().collect::<Vec<_>>();
-        process_batch(&batch, &embedder, &qdrant, vector_dimension).await?;
+        process_batch(&batch, &embedder, &qdrant, vector_dimension, sync_state).await?;
     }
 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn process_batch(
     paths: &[PathBuf],
     embedder: &EmbeddingClient,
     qdrant: &QdrantStore,
     vector_dimension: usize,
+    sync_state: &mut SyncState,
 ) -> Result<()> {
     if paths.is_empty() {
         return Ok(());
@@ -153,6 +167,24 @@ async fn process_batch(
             .modified()
             .with_context(|| format!("failed to read modified time for {}", path.display()))?;
         let initial_size = initial_meta.len();
+
+        let current_hash = match SyncState::compute_hash_stream(path).await {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("⚠️ Lỗi khi băm file {}: {e}", path.display());
+                continue 'file_loop;
+            }
+        };
+
+        if !sync_state.is_modified(path, &current_hash) {
+            eprintln!("⏭️ File {} không đổi. Skip Embedding!", path.display());
+            continue 'file_loop;
+        }
+
+        eprintln!(
+            "🔄 File {} mới hoặc đã bị sửa. Đang tiến hành nhai...",
+            path.display()
+        );
 
         let mut file = tokio::fs::File::open(path)
             .await
@@ -253,6 +285,8 @@ async fn process_batch(
             "✅ File {} processed atomically with OCC success!",
             path.display()
         );
+
+        sync_state.update_file(path.clone(), current_hash);
     }
 
     Ok(())
