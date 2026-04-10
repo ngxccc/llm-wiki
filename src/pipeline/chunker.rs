@@ -2,6 +2,95 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use regex::Regex;
 use std::sync::OnceLock;
 
+struct ChunkerContext {
+    max_bytes: usize,
+    chunks: Vec<String>,
+    current_block: String,
+
+    // State cho Code Block
+    in_code_block: bool,
+
+    // State cho Table
+    in_table: bool,
+    in_table_head: bool,
+    header_start_idx: usize,
+    header_buffer: String,
+}
+
+impl ChunkerContext {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            chunks: Vec::new(),
+            current_block: String::new(),
+            in_code_block: false,
+            in_table: false,
+            in_table_head: false,
+            header_start_idx: 0,
+            header_buffer: String::new(),
+        }
+    }
+
+    fn handle_table_start(&mut self) {
+        self.in_table = true;
+        self.header_buffer.clear();
+        if !self.current_block.is_empty() && !self.current_block.ends_with('\n') {
+            self.current_block.push('\n');
+        }
+    }
+
+    fn handle_table_end(&mut self) {
+        self.in_table = false;
+        self.header_buffer.clear();
+        self.check_and_flush_block();
+    }
+
+    fn handle_table_row_end(&mut self) {
+        self.current_block.push('\n');
+        // Tiêm Header nếu tràn chunk
+        if self.in_table && !self.in_table_head && self.current_block.len() > self.max_bytes {
+            self.chunks.push(self.current_block.trim().to_string());
+            self.current_block.clear();
+            self.current_block.push_str(&self.header_buffer);
+        }
+    }
+
+    fn handle_code_block_start(&mut self) {
+        self.in_code_block = true;
+        self.current_block.push_str("```\n");
+    }
+
+    fn handle_code_block_end(&mut self) {
+        self.in_code_block = false;
+        if !self.current_block.ends_with('\n') {
+            self.current_block.push('\n');
+        }
+        self.current_block.push_str("```");
+
+        let hard_limit = self.max_bytes.max(8192);
+        if self.current_block.len() > hard_limit {
+            self.chunks
+                .extend(byte_slice_fallback(&self.current_block, self.max_bytes));
+        } else {
+            self.chunks.push(self.current_block.clone());
+        }
+        self.current_block.clear();
+    }
+
+    fn check_and_flush_block(&mut self) {
+        if self.current_block.len() > self.max_bytes {
+            self.chunks.extend(semantic_chunk_paragraph(
+                &self.current_block,
+                self.max_bytes,
+            ));
+            self.current_block.clear();
+        } else if !self.current_block.trim().is_empty() {
+            self.chunks.push(self.current_block.trim().to_string());
+            self.current_block.clear();
+        }
+    }
+}
+
 /// Compile Regex once per application lifecycle to save CPU cycle.
 fn base64_img_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -98,126 +187,48 @@ pub fn ultimate_markdown_chunker(text: &str, max_bytes: usize) -> Vec<String> {
     options.insert(Options::ENABLE_TASKLISTS);
 
     let parser = Parser::new_ext(&cleaned_text, options);
+    let mut ctx = ChunkerContext::new(max_bytes);
 
-    let mut chunks = Vec::new();
-    let mut current_block = String::new();
-    let mut in_code_block = false;
-
-    let mut in_table = false;
-    let mut in_table_head = false;
-    let mut header_start_idx = 0;
-    let mut header_buffer = String::new();
-
-    // Traverse the Abstract Syntax Tree (AST)
+    // Vòng lặp Switchboard (Trạm điều phối)
     for event in parser {
         match event {
-            Event::Start(Tag::Table(_)) => {
-                in_table = true;
-                header_buffer.clear();
-                // Thêm \n trước bảng cho đẹp nếu block chưa có
-                if !current_block.is_empty() && !current_block.ends_with('\n') {
-                    current_block.push('\n');
-                }
-            }
-            Event::End(TagEnd::Table) => {
-                in_table = false;
-                header_buffer.clear();
-                // Kết thúc bảng, nếu dung lượng quá lớn thì chốt chunk luôn
-                if current_block.len() > max_bytes {
-                    chunks.extend(semantic_chunk_paragraph(&current_block, max_bytes));
-                    current_block.clear();
-                } else if !current_block.trim().is_empty() {
-                    chunks.push(current_block.trim().to_string());
-                    current_block.clear();
-                }
-            }
-
+            Event::Start(Tag::Table(_)) => ctx.handle_table_start(),
+            Event::End(TagEnd::Table) => ctx.handle_table_end(),
             Event::Start(Tag::TableHead) => {
-                in_table_head = true;
-                header_start_idx = current_block.len(); // Đánh dấu vị trí bắt đầu
+                ctx.in_table_head = true;
+                ctx.header_start_idx = ctx.current_block.len();
             }
             Event::End(TagEnd::TableHead) => {
-                in_table_head = false;
-                current_block.push('\n');
-                // Copy chính xác chuỗi text của Header vừa được tạo ra
-                if header_start_idx <= current_block.len() {
-                    header_buffer = current_block[header_start_idx..].to_string();
+                ctx.in_table_head = false;
+                ctx.current_block.push('\n');
+                if ctx.header_start_idx <= ctx.current_block.len() {
+                    ctx.header_buffer = ctx.current_block[ctx.header_start_idx..].to_string();
                 }
             }
+            Event::Start(Tag::TableCell) => ctx.current_block.push_str("| "),
+            Event::End(TagEnd::TableCell) => ctx.current_block.push(' '),
+            Event::End(TagEnd::TableRow) => ctx.handle_table_row_end(),
 
-            Event::Start(Tag::TableCell) => current_block.push_str("| "),
-            Event::End(TagEnd::TableCell) => current_block.push(' '),
+            Event::Start(Tag::CodeBlock(_)) => ctx.handle_code_block_start(),
+            Event::End(TagEnd::CodeBlock) => ctx.handle_code_block_end(),
 
-            Event::End(TagEnd::TableRow) => {
-                current_block.push('\n'); // Xuống dòng sau mỗi hàng
+            Event::Text(t) | Event::Code(t) => ctx.current_block.push_str(&t),
+            Event::SoftBreak | Event::HardBreak => ctx.current_block.push('\n'),
 
-                // NẾU: Đang ở trong bảng + Không phải là header + Đã tràn max_bytes
-                if in_table && !in_table_head && current_block.len() > max_bytes {
-                    chunks.push(current_block.trim().to_string());
-                    current_block.clear();
-                    current_block.push_str(&header_buffer);
-                }
-            }
-
-            // Entered a Code Block
-            Event::Start(Tag::CodeBlock(_)) => {
-                in_code_block = true;
-                current_block.push_str("```\n");
-            }
-            // Exited a Code Block -> Push it entirely (Bypass semantic fallback)
-            Event::End(TagEnd::CodeBlock) => {
-                in_code_block = false;
-
-                if !current_block.ends_with('\n') {
-                    current_block.push('\n');
-                }
-                current_block.push_str("```");
-
-                let hard_limit = max_bytes.max(8192);
-
-                // Graceful Degradation: Even code blocks must be chopped if they are > max_bytes
-                if current_block.len() > hard_limit {
-                    chunks.extend(byte_slice_fallback(&current_block, max_bytes));
-                } else {
-                    chunks.push(current_block.clone());
-                }
-                current_block.clear();
-            }
-
-            // Catch raw text or code snippets
-            Event::Text(t) | Event::Code(t) => {
-                current_block.push_str(&t);
-            }
-            Event::SoftBreak | Event::HardBreak => {
-                current_block.push('\n');
-            }
-
-            // Exited a Paragraph or List Item
             Event::End(TagEnd::Paragraph | TagEnd::Item) => {
-                if !in_code_block {
-                    if current_block.len() > max_bytes {
-                        // Route to TIER 3: Semantic Chopper
-                        chunks.extend(semantic_chunk_paragraph(&current_block, max_bytes));
-                    } else if !current_block.trim().is_empty() {
-                        chunks.push(current_block.trim().to_string());
-                    }
-                    current_block.clear();
+                if !ctx.in_code_block && !ctx.in_table {
+                    ctx.check_and_flush_block();
                 }
             }
             _ => {}
         }
     }
 
-    // Flush any remaining text in buffer
-    if !current_block.trim().is_empty() {
-        if current_block.len() > max_bytes {
-            chunks.extend(semantic_chunk_paragraph(&current_block, max_bytes));
-        } else {
-            chunks.push(current_block.trim().to_string());
-        }
+    if !ctx.current_block.trim().is_empty() {
+        ctx.check_and_flush_block();
     }
 
-    chunks
+    ctx.chunks
 }
 
 #[cfg(test)]
