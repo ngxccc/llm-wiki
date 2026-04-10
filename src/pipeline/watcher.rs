@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -15,6 +16,7 @@ const DEBOUNCE_WINDOW: Duration = Duration::from_secs(2);
 const READ_RETRY_DELAY: Duration = Duration::from_millis(150);
 const SIZE_STABILITY_DELAY: Duration = Duration::from_millis(100);
 const MAX_READ_RETRIES: usize = 5;
+const RAM_BUFFER_LIMIT: usize = 5 * 1024 * 1024;
 
 pub async fn run_watcher(
     raw_dir: PathBuf,
@@ -135,74 +137,142 @@ async fn process_batch(
     }
 
     eprintln!("watcher processing batch with {} file(s)", paths.len());
-    let mut vectors = Vec::new();
 
-    'file_loop: for path in paths {
-        let content = match read_markdown_with_retry(path).await {
-            Ok(content) => content,
-            Err(error) => {
-                eprintln!(
-                    "watcher skipped unreadable file {}: {error:#}",
-                    path.display()
-                );
+    for path in paths {
+        // Đảm bảo file ổn định trước khi đọc
+        if let Err(e) = wait_for_stable_file(path).await {
+            eprintln!("watcher skipped file {}: {}", path.display(), e);
+            continue;
+        }
+
+        // Mở file dạng LUỒNG (Stream), KHÔNG load toàn bộ vào RAM
+        let file = match tokio::fs::File::open(path).await {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("failed to open stream {}: {}", path.display(), e);
                 continue;
             }
         };
 
-        let chunks = ultimate_markdown_chunker(&content, 800);
-        if chunks.is_empty() {
-            continue;
+        let reader = BufReader::new(file);
+        let mut lines = reader.lines();
+
+        let mut string_buffer = String::with_capacity(RAM_BUFFER_LIMIT);
+        let mut in_code_block = false;
+        let mut vectors = Vec::new();
+        let mut global_chunk_index = 0; // Để track ID chunk xuyên suốt file 5GB
+
+        // HÚT TỪNG DÒNG LÊN RAM
+        while let Ok(Some(line)) = lines.next_line().await {
+            // Track state nhẹ nhàng để không cắt nhầm Code Block
+            if line.trim_start().starts_with("```") {
+                in_code_block = !in_code_block;
+            }
+
+            string_buffer.push_str(&line);
+            string_buffer.push('\n');
+
+            // NẾU BUFFER ĐẦY 5MB VÀ ĐANG Ở NGOÀI CODE BLOCK -> XẢ RAM!
+            if string_buffer.len() >= RAM_BUFFER_LIMIT && !in_code_block {
+                global_chunk_index = process_and_flush_buffer(
+                    &string_buffer,
+                    path,
+                    embedder,
+                    qdrant,
+                    vector_dimension,
+                    &mut vectors,
+                    global_chunk_index,
+                )
+                .await?;
+
+                // Giải phóng RAM liền tay!
+                string_buffer.clear();
+            }
         }
 
-        let chunk_refs = chunks.iter().map(String::as_str).collect::<Vec<_>>();
-        let mut embeddings = Vec::with_capacity(chunk_refs.len());
-        let max_batch_size = embedder.max_batch_size();
-
-        for chunk_batch in chunk_refs.chunks(max_batch_size) {
-            let mut batch_embeddings = match embedder.embed_batch_with_retry(chunk_batch, 3).await {
-                Ok(embeddings) => embeddings,
-                Err(error) => {
-                    eprintln!(
-                        "watcher skipped file due to embedding batch failure (file: {}): {error:#}",
-                        path.display()
-                    );
-                    continue 'file_loop;
-                }
-            };
-            embeddings.append(&mut batch_embeddings);
-        }
-
-        for (index, (chunk, embedding)) in chunks.into_iter().zip(embeddings).enumerate() {
-            let embedding = if embedding.len() == vector_dimension {
-                embedding
-            } else {
-                eprintln!(
-                    "watcher embedding dimension mismatch (file: {}, chunk: {}, got {}, expected {}). Falling back to deterministic embedding.",
-                    path.display(),
-                    index,
-                    embedding.len(),
-                    vector_dimension
-                );
-                embed_chunk(&chunk, vector_dimension)
-            };
-
-            vectors.push(ChunkVector {
-                source_path: path.display().to_string(),
-                chunk_index: index,
-                text: chunk,
-                embedding,
-            });
+        // Xả nốt lượng Data còn sót lại ở cuối file
+        if !string_buffer.trim().is_empty() {
+            process_and_flush_buffer(
+                &string_buffer,
+                path,
+                embedder,
+                qdrant,
+                vector_dimension,
+                &mut vectors,
+                global_chunk_index,
+            )
+            .await?;
         }
     }
 
-    if vectors.is_empty() {
-        eprintln!("watcher batch produced no vectors to upsert");
-        return Ok(());
-    }
-
-    qdrant.bulk_upsert(&vectors).await?;
-    eprintln!("watcher upserted {} vector(s) to Qdrant", vectors.len());
     Ok(())
+}
+
+async fn process_and_flush_buffer(
+    text_buffer: &str,
+    path: &Path,
+    embedder: &EmbeddingClient,
+    qdrant: &QdrantStore,
+    vector_dimension: usize,
+    vectors: &mut Vec<ChunkVector>,
+    mut chunk_index: usize,
+) -> Result<usize> {
+    // 1. Quăng 5MB text vào Chunker xịn xò của mình
+    let chunks = ultimate_markdown_chunker(text_buffer, 800);
+    if chunks.is_empty() {
+        return Ok(chunk_index);
+    }
+
+    let chunk_refs = chunks.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut embeddings = Vec::with_capacity(chunk_refs.len());
+
+    // 2. Gọi API Embeddings (Đã chia lô batch bên trong)
+    for chunk_batch in chunk_refs.chunks(embedder.max_batch_size()) {
+        let mut batch_embeddings = embedder
+            .embed_batch_with_retry(chunk_batch, 3)
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("Batch embed failed: {e}");
+                vec![vec![0.0; vector_dimension]; chunk_batch.len()] // Fallback rác nếu fail
+            });
+        embeddings.append(&mut batch_embeddings);
+    }
+
+    // 3. Đóng gói thành Vector Point
+    for (chunk, embedding) in chunks.into_iter().zip(embeddings) {
+        let final_embedding = if embedding.len() == vector_dimension {
+            embedding
+        } else {
+            embed_chunk(&chunk, vector_dimension)
+        };
+
+        vectors.push(ChunkVector {
+            source_path: path.display().to_string(),
+            chunk_index,
+            text: chunk,
+            embedding: final_embedding,
+        });
+        chunk_index += 1;
+    }
+
+    // 4. Bơm mẹ nó lên Qdrant luôn cho nóng (Giữ mảng vectors nhỏ)
+    if !vectors.is_empty() {
+        qdrant.bulk_upsert(vectors).await?;
+        eprintln!("Stream flushed {} vectors to Qdrant...", vectors.len());
+        vectors.clear(); // XẢ RAM TẦNG 2!
+    }
+
+    Ok(chunk_index) // Trả về index để đếm tiếp cho mẻ sau
+}
+
+async fn wait_for_stable_file(path: &Path) -> Result<()> {
+    for _ in 0..MAX_READ_RETRIES {
+        if has_stable_size(path).await? {
+            return Ok(());
+        }
+        tokio::time::sleep(READ_RETRY_DELAY).await;
+    }
+    anyhow::bail!("File is constantly modifying, skipped.")
 }
 
 fn embed_chunk(text: &str, dimension: usize) -> Vec<f32> {
@@ -266,74 +336,10 @@ fn collect_markdown_files(root: &Path) -> Vec<PathBuf> {
     markdown_files
 }
 
-async fn read_markdown_with_retry(path: &Path) -> Result<String> {
-    let mut last_error: Option<io::Error> = None;
-
-    for attempt in 1..=MAX_READ_RETRIES {
-        match has_stable_size(path).await {
-            Ok(true) => {}
-            Ok(false) => {
-                eprintln!(
-                    "warning: file {} is still changing (attempt {attempt}/{MAX_READ_RETRIES}), retrying",
-                    path.display()
-                );
-                tokio::time::sleep(READ_RETRY_DELAY).await;
-                continue;
-            }
-            Err(error) if is_retryable_io(error.kind()) => {
-                eprintln!(
-                    "warning: failed to stat {} ({error}) (attempt {attempt}/{MAX_READ_RETRIES}), retrying",
-                    path.display()
-                );
-                last_error = Some(error);
-                tokio::time::sleep(READ_RETRY_DELAY).await;
-                continue;
-            }
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("failed to stat file {}", path.display()));
-            }
-        }
-
-        match tokio::fs::read_to_string(path).await {
-            Ok(content) => return Ok(content),
-            Err(error) if is_retryable_io(error.kind()) => {
-                eprintln!(
-                    "warning: failed to read {} ({error}) (attempt {attempt}/{MAX_READ_RETRIES}), retrying",
-                    path.display()
-                );
-                last_error = Some(error);
-                tokio::time::sleep(READ_RETRY_DELAY).await;
-            }
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("failed to read file {}", path.display()));
-            }
-        }
-    }
-
-    if let Some(error) = last_error {
-        return Err(error)
-            .with_context(|| format!("exhausted retries while reading {}", path.display()));
-    }
-
-    anyhow::bail!("exhausted retries while reading {}", path.display());
-}
-
 async fn has_stable_size(path: &Path) -> io::Result<bool> {
     let first = tokio::fs::metadata(path).await?;
     let first_len = first.len();
     tokio::time::sleep(SIZE_STABILITY_DELAY).await;
     let second = tokio::fs::metadata(path).await?;
     Ok(first_len == second.len())
-}
-
-fn is_retryable_io(kind: io::ErrorKind) -> bool {
-    matches!(
-        kind,
-        io::ErrorKind::WouldBlock
-            | io::ErrorKind::Interrupted
-            | io::ErrorKind::TimedOut
-            | io::ErrorKind::PermissionDenied
-    )
 }
