@@ -290,7 +290,13 @@ mod tests {
     #[test]
     fn jaccard_is_one_for_identical_trigrams() {
         let left = [1_u64, 2_u64, 3_u64];
-        assert_eq!(jaccard_similarity(&left, &left), 1.0);
+        let similarity = jaccard_similarity(&left, &left);
+        // Use Epsilon-based comparison for floating-point numbers.
+        // Instead of `==`, check if the absolute difference is smaller than a tiny threshold.
+        assert!(
+            (similarity - 1.0).abs() < f32::EPSILON,
+            "Expected similarity to be ~1.0, but got {similarity}",
+        );
     }
 
     #[test]
