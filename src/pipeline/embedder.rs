@@ -17,8 +17,6 @@ struct ModernEmbeddingRequest<'a> {
     model: &'a str,
     input: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    encoding_format: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<usize>,
 }
 
@@ -120,7 +118,6 @@ impl EmbeddingClient {
         let payload = ModernEmbeddingRequest {
             model: &self.config.model,
             input: texts.to_vec(),
-            encoding_format: self.config.encoding_format.as_deref(),
             dimensions: self.config.dimensions,
         };
 

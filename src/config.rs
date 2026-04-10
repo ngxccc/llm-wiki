@@ -31,7 +31,6 @@ pub struct EmbeddingConfig {
     #[serde(default = "default_embedding_timeout_secs")]
     pub timeout_secs: u64,
     pub api_key: Option<String>,
-    pub encoding_format: Option<String>,
     pub dimensions: Option<usize>,
     #[serde(default = "default_embedding_max_batch_size")]
     pub max_batch_size: usize,
@@ -57,7 +56,6 @@ impl Default for EmbeddingConfig {
             model: default_embedding_model(),
             timeout_secs: default_embedding_timeout_secs(),
             api_key: None,
-            encoding_format: None,
             dimensions: None,
             max_batch_size: default_embedding_max_batch_size(),
         }
@@ -145,7 +143,7 @@ fn default_embedding_endpoint() -> String {
 }
 
 fn default_embedding_model() -> String {
-    "nomic-embed-text".to_string()
+    "bge-m3".to_string()
 }
 
 fn default_embedding_timeout_secs() -> u64 {
