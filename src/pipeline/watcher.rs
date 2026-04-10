@@ -3,11 +3,13 @@ use crate::pipeline::chunker::ultimate_markdown_chunker;
 use crate::pipeline::embedder::EmbeddingClient;
 use anyhow::{Context, Result};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use std::sync::OnceLock;
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -140,31 +142,46 @@ async fn process_batch(
 
     for path in paths {
         // Đảm bảo file ổn định trước khi đọc
-        if let Err(e) = wait_for_stable_file(path).await {
-            eprintln!("watcher skipped file {}: {}", path.display(), e);
+        if let Err(_e) = wait_for_stable_file(path).await {
             continue;
         }
 
-        // Mở file dạng LUỒNG (Stream), KHÔNG load toàn bộ vào RAM
-        let file = match tokio::fs::File::open(path).await {
-            Ok(f) => f,
-            Err(e) => {
-                eprintln!("failed to open stream {}: {}", path.display(), e);
-                continue;
-            }
-        };
+        let mut file = tokio::fs::File::open(path)
+            .await
+            .with_context(|| format!("failed to open file {}", path.display()))?;
+        let reader = BufReader::new(&mut file);
 
-        let reader = BufReader::new(file);
+        // GATHER GLOBAL CONTEXT (Link Extraction)
+        eprintln!("Pass 1: Scanning global context for {}...", path.display());
+        let mut global_links = String::new();
+        let mut lines = reader.lines();
+        let link_re = ref_link_regex();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            // Nếu dòng này là khai báo link, cất nó vào "túi khôn"
+            if link_re.is_match(&line) {
+                global_links.push_str(&line);
+                global_links.push('\n');
+            }
+        }
+
+        // AST PARSING & CHUNKING
+        eprintln!("Pass 2: Chunking & Embedding 5MB streams...");
+        // Tua ngược con trỏ file về lại vị trí byte 0 (Vạch xuất phát)
+        file.rewind()
+            .await
+            .with_context(|| format!("failed to rewind file {}", path.display()))?;
+
+        // Reset lại reader cho file vừa tua
+        let reader = BufReader::new(&mut file);
         let mut lines = reader.lines();
 
         let mut string_buffer = String::with_capacity(RAM_BUFFER_LIMIT);
         let mut in_code_block = false;
         let mut vectors = Vec::new();
-        let mut global_chunk_index = 0; // Để track ID chunk xuyên suốt file 5GB
+        let mut global_chunk_index = 0;
 
-        // HÚT TỪNG DÒNG LÊN RAM
         while let Ok(Some(line)) = lines.next_line().await {
-            // Track state nhẹ nhàng để không cắt nhầm Code Block
             if line.trim_start().starts_with("```") {
                 in_code_block = !in_code_block;
             }
@@ -172,10 +189,13 @@ async fn process_batch(
             string_buffer.push_str(&line);
             string_buffer.push('\n');
 
-            // NẾU BUFFER ĐẦY 5MB VÀ ĐANG Ở NGOÀI CODE BLOCK -> XẢ RAM!
             if string_buffer.len() >= RAM_BUFFER_LIMIT && !in_code_block {
+                // 💉 INJECTION MAGIC: Nhồi đống Link gom được ở Pass 1 vào đầu Buffer 5MB!
+                // Nhờ vậy, AST sẽ tự động resolve được [my_link] dù nó nằm ở cuối file.
+                let chunk_payload = format!("{global_links}\n\n{string_buffer}");
+
                 global_chunk_index = process_and_flush_buffer(
-                    &string_buffer,
+                    &chunk_payload,
                     path,
                     embedder,
                     qdrant,
@@ -185,15 +205,15 @@ async fn process_batch(
                 )
                 .await?;
 
-                // Giải phóng RAM liền tay!
                 string_buffer.clear();
             }
         }
 
-        // Xả nốt lượng Data còn sót lại ở cuối file
+        // Xử lý nốt phần đuôi file
         if !string_buffer.trim().is_empty() {
+            let chunk_payload = format!("{global_links}\n\n{string_buffer}");
             process_and_flush_buffer(
-                &string_buffer,
+                &chunk_payload,
                 path,
                 embedder,
                 qdrant,
@@ -342,4 +362,12 @@ async fn has_stable_size(path: &Path) -> io::Result<bool> {
     tokio::time::sleep(SIZE_STABILITY_DELAY).await;
     let second = tokio::fs::metadata(path).await?;
     Ok(first_len == second.len())
+}
+
+fn ref_link_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?m)^\[([^\]]+)\]:\s*(.+)$")
+            .expect("internal error: ref_link_regex pattern must be valid")
+    })
 }
