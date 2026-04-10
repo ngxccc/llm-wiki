@@ -1,5 +1,5 @@
 use crate::db::qdrant::{ChunkVector, QdrantStore};
-use crate::pipeline::chunker::chunk_markdown;
+use crate::pipeline::chunker::semantic_chunk;
 use crate::pipeline::embedder::EmbeddingClient;
 use anyhow::{Context, Result};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -149,7 +149,7 @@ async fn process_batch(
             }
         };
 
-        let chunks = chunk_markdown(&content, 800, 120);
+        let chunks = semantic_chunk(&content, 800, 1);
         if chunks.is_empty() {
             continue;
         }
