@@ -2,7 +2,7 @@
   "servers": {
     "llm-wiki": {
       "type": "stdio",
-      "command": "${workspaceFolder}/target/debug/llm-wiki",
+      "command": "${workspaceFolder}/target/release/llm-wiki",
       "args": [],
       "cwd": "${workspaceFolder}",
       "env": {

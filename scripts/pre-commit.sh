@@ -25,7 +25,7 @@ if ! "$CARGO_BIN" clippy -- -D warnings -W clippy::pedantic -W clippy::await_hol
 fi
 
 # 3. Run unit tests
-if ! "$CARGO_BIN" test; then
+if ! "$CARGO_BIN" test --release; then
     echo "❌ Unit tests failed! Code is broken."
     exit 1
 fi
