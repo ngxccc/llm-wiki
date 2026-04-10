@@ -140,11 +140,19 @@ async fn process_batch(
 
     eprintln!("watcher processing batch with {} file(s)", paths.len());
 
-    for path in paths {
+    'file_loop: for path in paths {
         // Đảm bảo file ổn định trước khi đọc
         if let Err(_e) = wait_for_stable_file(path).await {
             continue;
         }
+
+        let initial_meta = tokio::fs::metadata(path)
+            .await
+            .with_context(|| format!("failed to read metadata for {}", path.display()))?;
+        let initial_mtime = initial_meta
+            .modified()
+            .with_context(|| format!("failed to read modified time for {}", path.display()))?;
+        let initial_size = initial_meta.len();
 
         let mut file = tokio::fs::File::open(path)
             .await
@@ -223,6 +231,28 @@ async fn process_batch(
             )
             .await?;
         }
+
+        if let Ok(final_meta) = tokio::fs::metadata(path).await {
+            let final_mtime = final_meta.modified().unwrap_or(initial_mtime);
+            let final_size = final_meta.len();
+
+            // Nếu file bị user sửa đổi (hoặc size đổi) trong lúc ta đang chạy 2 Pass
+            if final_mtime != initial_mtime || final_size != initial_size {
+                eprintln!(
+                    "🚨 TOCTOU Detected! File {} was modified during processing.",
+                    path.display()
+                );
+                eprintln!("🗑️ Aborting current state. The Watcher will re-process the new event automatically.");
+
+                // Trả về lỗi để thoát lô xử lý này. Watcher sẽ tự kích hoạt lại lô mới!
+                continue 'file_loop;
+            }
+        }
+
+        eprintln!(
+            "✅ File {} processed atomically with OCC success!",
+            path.display()
+        );
     }
 
     Ok(())
