@@ -10,6 +10,13 @@ use tokio::time::sleep;
 pub struct EmbeddingClient {
     client: Client,
     config: EmbeddingConfig,
+    pub capabilities: ModelCapabilities,
+}
+
+#[derive(Clone, Default)]
+pub struct ModelCapabilities {
+    pub supports_dimensions: bool,
+    // Sau này có thể thêm supports_encoding_format, etc.
 }
 
 #[derive(Serialize)]
@@ -45,13 +52,27 @@ enum EmbeddingValue {
 }
 
 impl EmbeddingClient {
-    pub fn new(config: EmbeddingConfig) -> Result<Self> {
+    pub async fn new(config: EmbeddingConfig) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs.max(1)))
             .build()
             .context("failed to build reqwest client")?;
 
-        Ok(Self { client, config })
+        let mut instance = Self {
+            client,
+            config,
+            capabilities: ModelCapabilities::default(),
+        };
+
+        instance.probe_capabilities().await?;
+
+        Ok(instance)
+    }
+
+    fn get_url(&self) -> String {
+        let base = self.config.base_url.trim_end_matches('/');
+        let endpoint = self.config.endpoint.trim_start_matches('/');
+        format!("{base}/{endpoint}")
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
@@ -111,14 +132,16 @@ impl EmbeddingClient {
     }
 
     async fn call_embedding_api_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        let base = self.config.base_url.trim_end_matches('/');
-        let endpoint = self.config.endpoint.trim_start_matches('/');
-        let url = format!("{base}/{endpoint}");
+        let url = self.get_url();
 
         let payload = ModernEmbeddingRequest {
             model: &self.config.model,
             input: texts.to_vec(),
-            dimensions: self.config.dimensions,
+            dimensions: if self.capabilities.supports_dimensions {
+                self.config.dimensions
+            } else {
+                None
+            },
         };
 
         let mut request = self.client.post(url).json(&payload);
@@ -155,6 +178,60 @@ impl EmbeddingClient {
         }
 
         Ok(embeddings)
+    }
+
+    async fn probe_capabilities(&mut self) -> Result<()> {
+        eprintln!(
+            "🔍 Probing capabilities for model: {}...",
+            self.config.model
+        );
+
+        // Kịch bản 1: Gửi full tham số (Có dimensions)
+        let test_text = "Probe test";
+        let full_payload = ModernEmbeddingRequest {
+            model: &self.config.model,
+            input: vec![test_text],
+            dimensions: self.config.dimensions, // Thử nhét dimensions vào
+        };
+
+        // Gửi thử (không cần retry)
+        let response = self
+            .client
+            .post(self.get_url())
+            .json(&full_payload)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            eprintln!("✅ Model supports custom dimensions!");
+            self.capabilities.supports_dimensions = true;
+            return Ok(());
+        }
+
+        // Kịch bản 2: Bị ăn chửi (400 Bad Request) -> Rút lui chiến thuật
+        eprintln!("⚠️ Model rejected dimensions parameter. Downgrading capabilities...");
+        let fallback_payload = ModernEmbeddingRequest {
+            model: &self.config.model,
+            input: vec![test_text],
+            dimensions: None, // 🟢 TƯỚC BỎ DIMENSIONS
+        };
+
+        let response = self
+            .client
+            .post(self.get_url())
+            .json(&fallback_payload)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            eprintln!("✅ Model successfully probed with fallback parameters.");
+            self.capabilities.supports_dimensions = false;
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "Probe failed completely. Model might be offline or fundamentally incompatible."
+        )
     }
 }
 

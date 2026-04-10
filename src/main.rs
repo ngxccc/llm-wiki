@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let qdrant = init_qdrant_with_retry(&config, vector_dim_u64).await;
 
-    let embedder = match EmbeddingClient::new(config.embedding.clone()) {
+    let embedder = match EmbeddingClient::new(config.embedding.clone()).await {
         Ok(client) => client,
         Err(error) => {
             eprintln!("failed to initialize embedding client: {error}");
