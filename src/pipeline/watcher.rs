@@ -281,10 +281,8 @@ async fn process_and_flush_buffer(
         let mut batch_embeddings = embedder
             .embed_batch_with_retry(chunk_batch, 3)
             .await
-            .unwrap_or_else(|e| {
-                eprintln!("Batch embed failed: {e}");
-                vec![vec![0.0; vector_dimension]; chunk_batch.len()] // Fallback rác nếu fail
-            });
+            .with_context(|| format!("❌ Embedding failed for batch in {}", path.display()))?;
+
         embeddings.append(&mut batch_embeddings);
     }
 
